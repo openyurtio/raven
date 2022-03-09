@@ -33,7 +33,7 @@ type vxlanAgent struct {
 	remoteCniIPs map[string]net.IP
 }
 
-func (agent *vxlanAgent) Update(localCniIP net.IP, localPublicIP net.IP, localSubnets []string) {
+func (agent *vxlanAgent) Init(localCniIP net.IP, localPublicIP net.IP) {
 	agent.gatewayIPs = make([]net.IP, 0)
 	agent.localCniIP = localCniIP
 	agent.remoteCniIPs = make(map[string]net.IP)
