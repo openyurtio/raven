@@ -41,7 +41,7 @@ func EnsureEndpoint(gateway *v1alpha1.Gateway) *types.Endpoint {
 	for k, v := range gateway.Status.ActiveEndpoint.Config {
 		endpoint.Config[k] = v
 	}
-	endpoint.Forward = false
+	endpoint.Central = false
 	return endpoint
 }
 
@@ -60,7 +60,7 @@ func UpdateCentralEndpoint(local *types.Endpoint, remote *types.Endpoint, others
 		Vtep:       local.Vtep,
 		NATEnabled: local.NATEnabled,
 		Config:     local.Config,
-		Forward:    true,
+		Central:    true,
 	}
 }
 
@@ -92,7 +92,7 @@ func EnsureCentralEndpoint(local *types.Endpoint, others map[string]*types.Endpo
 			Vtep:       central.Vtep,
 			NATEnabled: central.NATEnabled,
 			Config:     central.Config,
-			Forward:    true,
+			Central:    true,
 		}
 	}
 	return nil
