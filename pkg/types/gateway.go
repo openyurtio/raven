@@ -28,7 +28,7 @@ type Endpoint struct {
 	NATEnabled bool
 	Config     map[string]string
 
-	Forward bool // default false, updating in runtime
+	Central bool // default false, updating in runtime
 }
 
 type Gateway struct {

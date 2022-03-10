@@ -41,7 +41,7 @@ type libreswanGateway struct {
 	localPublicIP net.IP
 	localSubnets  []string
 	connections   map[string]map[string]string
-	forward       bool
+	central       bool
 }
 
 func (l *libreswanGateway) Init(localIP net.IP, localPublicIP net.IP) {
@@ -74,9 +74,9 @@ func (l *libreswanGateway) Start() {
 // UpdateLocalEndpoint Update Endpoint Configuration on Local Config/Subnet Changed
 func (l *libreswanGateway) UpdateLocalEndpoint(local *types.Endpoint) {
 	l.localSubnets = local.Subnets
-	if l.forward != local.Forward {
+	if l.central != local.Central {
 		l.Cleanup()
-		l.forward = local.Forward
+		l.central = local.Central
 	}
 }
 
@@ -121,7 +121,7 @@ func (l *libreswanGateway) whackConnectToEndpoint(connectionName string, gateway
 	if err := l.whackCmd(args...); err != nil {
 		return err
 	}
-	if !l.forward {
+	if !l.central {
 		if err := l.whackCmd("--route", "--name", connectionName); err != nil {
 			return err
 		}
