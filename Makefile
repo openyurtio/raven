@@ -50,7 +50,7 @@ run: fmt vet ## Run a controller from your host.
 	go run cmd/agent/main.go
 
 docker-build:## Build docker image with the agent.
-	docker build -t ${IMG} .
+	docker build --platform linux/amd64 -t ${IMG} .
 
 docker-push: ## Push docker image with the agent.
 	docker push ${IMG}

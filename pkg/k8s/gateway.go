@@ -18,7 +18,7 @@ package k8s
 
 import (
 	"net"
-	"strings"
+	"sort"
 
 	"github.com/EvilSuperstars/go-cidrman"
 	"github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/apis/raven/v1alpha1"
@@ -28,6 +28,7 @@ import (
 
 func EnsureEndpoint(gateway *v1alpha1.Gateway) *types.Endpoint {
 	endpoint := &types.Endpoint{}
+	endpoint.NodeName = gateway.Status.ActiveEndpoint.NodeName
 	endpoint.ID = gateway.Status.ActiveEndpoint.PrivateIP
 	endpoint.Vtep = net.ParseIP(gateway.Status.ActiveEndpoint.PublicIP)
 	endpoint.Subnets = make([]string, 0)
@@ -35,47 +36,74 @@ func EnsureEndpoint(gateway *v1alpha1.Gateway) *types.Endpoint {
 		endpoint.Subnets = append(endpoint.Subnets, subnet)
 	}
 	endpoint.Subnets, _ = cidrman.MergeCIDRs(endpoint.Subnets)
-	endpoint.Topologies = make(map[string]bool)
-	for l := range gateway.Labels {
-		if strings.HasPrefix(l, v1alpha1.LabelTopologyKeyPrefix) {
-			endpoint.Topologies[l] = true
-		}
-	}
+	endpoint.NATEnabled = gateway.Status.ActiveEndpoint.NATEnabled
 	endpoint.Config = make(map[string]string)
 	for k, v := range gateway.Status.ActiveEndpoint.Config {
 		endpoint.Config[k] = v
 	}
+	endpoint.Forward = false
 	return endpoint
 }
 
-func EnsureSubnets(src *types.Endpoint, dst *types.Endpoint, others map[string]*types.Endpoint) []string {
+func UpdateCentralEndpoint(local *types.Endpoint, remote *types.Endpoint, others map[string]*types.Endpoint) *types.Endpoint {
 	subnets := make([]string, 0)
-	subnets = append(subnets, src.Subnets...)
+	subnets = append(subnets, local.Subnets...)
 	for _, o := range others {
-		if o.ID != dst.ID {
+		if o.NodeName != remote.NodeName {
 			subnets = append(subnets, o.Subnets...)
 		}
 	}
-	return subnets
+	return &types.Endpoint{
+		NodeName:   local.NodeName,
+		Subnets:    subnets,
+		ID:         local.ID,
+		Vtep:       local.Vtep,
+		NATEnabled: local.NATEnabled,
+		Config:     local.Config,
+		Forward:    true,
+	}
 }
 
-func EnsureCloudEndpoint(others map[string]*types.Endpoint) *types.Endpoint {
-	var cloud *types.Endpoint
-	subnets := make([]string, 0)
-	for _, ep := range others {
-		if value, _ := types.GetBoolConfig(ep.Config, types.IsCloudEndpoint); value {
-			cloud = ep
-		}
-		subnets = append(subnets, ep.Subnets...)
+func EnsureCentralEndpoint(local *types.Endpoint, others map[string]*types.Endpoint) *types.Endpoint {
+	candidates := Merge(others, map[string]*types.Endpoint{local.NodeName: local})
+
+	keys := make([]string, 0)
+	for key := range candidates {
+		keys = append(keys, key)
 	}
-	if cloud != nil {
+	sort.Strings(keys)
+
+	var central *types.Endpoint
+	subnets := make([]string, 0)
+	for _, key := range keys {
+		ep := candidates[key]
+		if !ep.NATEnabled {
+			central = ep
+		}
+		if local.NodeName != ep.NodeName {
+			subnets = append(subnets, ep.Subnets...)
+		}
+	}
+	if central != nil {
 		return &types.Endpoint{
+			NodeName:   central.NodeName,
 			Subnets:    subnets,
-			ID:         cloud.ID,
-			Vtep:       cloud.Vtep,
-			Topologies: cloud.Topologies,
-			Config:     cloud.Config,
+			ID:         central.ID,
+			Vtep:       central.Vtep,
+			NATEnabled: central.NATEnabled,
+			Config:     central.Config,
+			Forward:    true,
 		}
 	}
 	return nil
+}
+
+func Merge(mObj ...map[string]*types.Endpoint) map[string]*types.Endpoint {
+	newObj := make(map[string]*types.Endpoint)
+	for _, m := range mObj {
+		for k, v := range m {
+			newObj[k] = v
+		}
+	}
+	return newObj
 }

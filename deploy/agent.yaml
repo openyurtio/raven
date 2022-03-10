@@ -51,7 +51,23 @@ spec:
       labels:
         app: raven-agent
     spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: type
+                    operator: NotIn
+                    values:
+                      - virtual-kubelet
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - amd64
+      hostPID: true
       hostNetwork: true
+      nodeSelector:
+        beta.kubernetes.io/os: linux
       serviceAccountName: raven-agent-account
       containers:
         - name: raven-agent
@@ -64,3 +80,5 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+      tolerations:
+        - operator: Exists

@@ -18,20 +18,17 @@ package types
 
 import (
 	"net"
-	"strconv"
-)
-
-const (
-	EnableCloudForwardingConfig = "enable-cloud-forwarding"
-	IsCloudEndpoint             = "is-cloud-endpoint"
 )
 
 type Endpoint struct {
+	NodeName   string
 	Subnets    []string
 	ID         string
 	Vtep       net.IP
-	Topologies map[string]bool
+	NATEnabled bool
 	Config     map[string]string
+
+	Forward bool // default false, updating in runtime
 }
 
 type Gateway struct {
@@ -42,16 +39,4 @@ type Gateway struct {
 
 func (e *Endpoint) String() string {
 	return e.ID
-}
-
-func GetBoolConfig(config map[string]string, name string) (bool, error) {
-	value, ok := config[name]
-	if ok && len(value) != 0 {
-		v, err := strconv.ParseBool(value)
-		if err != nil {
-			return false, err
-		}
-		return v, nil
-	}
-	return false, nil
 }

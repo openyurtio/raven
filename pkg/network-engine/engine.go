@@ -25,19 +25,20 @@ import (
 type NetworkEngine interface {
 	// Start network engine
 	Start()
-	// Update local network
-	Update(localIP net.IP, localPublicIP net.IP, localSubnets []string)
+	// Init local network
+	Init(localIP net.IP, localPublicIP net.IP)
 	// MTU Minimal MTU in NodePool
 	// NormalNode = InterfaceMTU - VxlanEncapHeader
 	// GatewayNode = min(IntrafaceMTU - IPSecEncapHeader, SamePoolNormalNodesMTU...)
 	MTU() (int, error)
 	// ConnectToGateway Connect NormalNode to Endpoint Node
 	ConnectToGateway(gateway *types.Gateway) error
+	// UpdateLocalEndpoint Update Endpoint Configuration on Local Config/Subnet Changed
+	UpdateLocalEndpoint(gateway *types.Endpoint)
+	// EnsureEndpoints Ensure Active Endpoints and Delete all Useless VPN Connections
+	EnsureEndpoints(gateways map[string]*types.Endpoint)
 	// ConnectToEndpoint Connect to others Endpoint
 	ConnectToEndpoint(gateway *types.Endpoint) error
-	// EnsureEndpoints Ensure Endpoints configuration
-	// on local/remote config/subnet changed
-	EnsureEndpoints(gateway []*types.Endpoint) error
 	// Cleanup all for new setup
 	Cleanup()
 }
@@ -54,9 +55,9 @@ type Engine struct {
 	libreswanGateway
 }
 
-func (ne *Engine) Update(localIP net.IP, localPublicIP net.IP, localSubnets []string) {
-	ne.vxlanAgent.Update(localIP, localPublicIP, localSubnets)
-	ne.libreswanGateway.Update(localIP, localPublicIP, localSubnets)
+func (ne *Engine) Init(localIP net.IP, localPublicIP net.IP) {
+	ne.vxlanAgent.Init(localIP, localPublicIP)
+	ne.libreswanGateway.Init(localIP, localPublicIP)
 }
 
 func (ne *Engine) Cleanup() {

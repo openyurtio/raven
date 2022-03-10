@@ -16,7 +16,9 @@
 
 package types
 
-import "net"
+import (
+	"net"
+)
 
 type Route struct {
 	Dst     *net.IPNet

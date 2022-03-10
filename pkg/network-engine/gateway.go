@@ -41,12 +41,12 @@ type libreswanGateway struct {
 	localPublicIP net.IP
 	localSubnets  []string
 	connections   map[string]map[string]string
+	forward       bool
 }
 
-func (l *libreswanGateway) Update(localIP net.IP, localPublicIP net.IP, localSubnets []string) {
+func (l *libreswanGateway) Init(localIP net.IP, localPublicIP net.IP) {
 	l.localIP = localIP
 	l.localPublicIP = localPublicIP
-	l.localSubnets = localSubnets
 }
 
 func (l *libreswanGateway) Start() {
@@ -71,13 +71,36 @@ func (l *libreswanGateway) Start() {
 	}
 }
 
-// EnsureEndpoints
-// fixme: add endpoints reconcile
-func (l *libreswanGateway) EnsureEndpoints(gateway []*types.Endpoint) error {
-	return nil
+// UpdateLocalEndpoint Update Endpoint Configuration on Local Config/Subnet Changed
+func (l *libreswanGateway) UpdateLocalEndpoint(local *types.Endpoint) {
+	l.localSubnets = local.Subnets
+	if l.forward != local.Forward {
+		l.Cleanup()
+		l.forward = local.Forward
+	}
 }
 
-// fixme: support single direction connection
+func (l *libreswanGateway) EnsureEndpoints(gateways map[string]*types.Endpoint) {
+	// ensure expect active connection id
+	expect := make(map[string]string)
+	for _, ep := range gateways {
+		id := fmt.Sprintf("%s-%s-%v-%v", ep.ID, ep.Vtep, l.localIP, l.localPublicIP)
+		expect[id] = ep.ID
+	}
+
+	// delete useless vpn connections
+	for id, conn := range l.connections {
+		if _, ok := expect[id]; !ok {
+			for c := range conn {
+				if err := l.whackDelConnection(c); err != nil {
+					klog.ErrorS(err, "fail to delete connection", "connection", c)
+				}
+			}
+			delete(l.connections, id)
+		}
+	}
+}
+
 func (l *libreswanGateway) whackConnectToEndpoint(connectionName string, gateway *types.Endpoint, localSubnet, remoteSubnet string) error {
 	args := make([]string, 0)
 	args = append(args, "--psk", "--encrypt", "--forceencaps", "--name", connectionName,
@@ -98,11 +121,15 @@ func (l *libreswanGateway) whackConnectToEndpoint(connectionName string, gateway
 	if err := l.whackCmd(args...); err != nil {
 		return err
 	}
-	if err := l.whackCmd("--route", "--name", connectionName); err != nil {
-		return err
+	if !l.forward {
+		if err := l.whackCmd("--route", "--name", connectionName); err != nil {
+			return err
+		}
+		if err := l.whackCmd("--initiate", "--asynchronous", "--name", connectionName); err != nil {
+			return err
+		}
 	}
-
-	return l.whackCmd("--initiate", "--asynchronous", "--name", connectionName)
+	return nil
 }
 
 func (l *libreswanGateway) ConnectToEndpoint(gateway *types.Endpoint) error {
