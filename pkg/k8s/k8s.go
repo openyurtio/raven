@@ -88,9 +88,6 @@ func New(config *Config) (*EngineController, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error init gateway reconciler: %v", err)
 	}
-	if err != nil {
-		return nil, fmt.Errorf("error get node pool: %v", err)
-	}
 
 	return ctr, nil
 }
