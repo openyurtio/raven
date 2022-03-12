@@ -17,21 +17,25 @@
 package k8s
 
 import (
-	"context"
-	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/apis/raven/v1alpha1"
-	"k8s.io/apimachinery/pkg/runtime"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/tools/clientcmd"
+	ravenclientset "github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/client/clientset/versioned"
+	raveninformer "github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/client/informers/externalversions"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	network_engine "github.com/openyurtio/raven/pkg/network-engine"
+	networkengine "github.com/openyurtio/raven/pkg/network-engine"
 	"github.com/openyurtio/raven/pkg/types"
+)
+
+const (
+	maxRetries = 30
 )
 
 type EngineController struct {
@@ -43,61 +47,98 @@ type EngineController struct {
 	otherGateways  map[string]*types.Endpoint
 	otherEndpoints map[string]*v1alpha1.Endpoint
 
-	ctrlManager manager.Manager
+	ravenInformer raveninformer.SharedInformerFactory
+	hasSynced     func() bool
+	queue         workqueue.RateLimitingInterface
 
-	engine network_engine.NetworkEngine
+	engine networkengine.NetworkEngine
 }
 
-type Config struct {
-	// NodeName
-	NodeName string
-
-	// Kubeconfig accepts the kubeconfig with the cluster credentials.
-	Kubeconfig string
-}
-
-func New(config *Config) (*EngineController, error) {
+func NewEngineController(nodeName string, ravenClient *ravenclientset.Clientset, engine networkengine.NetworkEngine) (*EngineController, error) {
 	ctr := &EngineController{
 		synMutex:       &sync.Mutex{},
-		nodeName:       config.NodeName,
+		nodeName:       nodeName,
 		otherEndpoints: make(map[string]*v1alpha1.Endpoint),
 		otherGateways:  make(map[string]*types.Endpoint),
-		engine:         network_engine.NewNetworkEngine(),
+		queue:          workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
+		engine:         engine,
 	}
-	scheme := runtime.NewScheme()
-	clientgoscheme.AddToScheme(scheme)
-	v1alpha1.AddToScheme(scheme)
-	cfg, err := clientcmd.BuildConfigFromFlags("", config.Kubeconfig)
-	if err != nil {
-		return nil, fmt.Errorf("error build restconfig: %v", err)
-	}
-	ctrlManager, err := ctrl.NewManager(cfg, ctrl.Options{
-		Scheme: scheme,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("error init ctrl manager %v", err)
-	}
-	ctr.ctrlManager = ctrlManager
 
-	err = (&GatewayReconciler{
-		Client:     ctrlManager.GetClient(),
-		Log:        ctrl.Log.WithName("controllers").WithName("Gateway"),
-		Scheme:     ctrlManager.GetScheme(),
-		controller: ctr,
-	}).SetupWithManager(ctrlManager)
-	if err != nil {
-		return nil, fmt.Errorf("error init gateway reconciler: %v", err)
-	}
+	ravenInformer := raveninformer.NewSharedInformerFactory(ravenClient, 24*time.Hour)
+	ravenInformer.Raven().V1alpha1().Gateways().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    ctr.addGateway,
+		UpdateFunc: ctr.updateGateway,
+		DeleteFunc: ctr.deleteGateway,
+	})
+	ctr.ravenInformer = ravenInformer
+	ctr.hasSynced = ravenInformer.Raven().V1alpha1().Gateways().Informer().HasSynced
 
 	return ctr, nil
 }
-func (c *EngineController) Start() {
-	c.engine.Start()
-	err := c.ctrlManager.Start(context.Background())
-	if err != nil {
-		panic(fmt.Sprintf("error start ctrl Manager: %v", err))
+
+func (c *EngineController) Start(stopCh <-chan struct{}) {
+	defer utilruntime.HandleCrash()
+	c.ravenInformer.Start(stopCh)
+	if !cache.WaitForCacheSync(stopCh, c.hasSynced) {
+		klog.Errorf("failed to wait for cache sync")
+		return
 	}
-	klog.Info("successfully start")
+	go wait.Until(c.worker, time.Second, stopCh)
+	klog.Info("engine controller successfully start")
+}
+
+func (c *EngineController) worker() {
+	for c.processNextWorkItem() {
+	}
+}
+
+func (c *EngineController) enqueue(obj *v1alpha1.Gateway, eventType EventType) {
+	c.queue.Add(&Event{
+		Obj:  obj,
+		Type: eventType,
+	})
+}
+
+func (c *EngineController) processNextWorkItem() bool {
+	key, quit := c.queue.Get()
+	if quit {
+		return false
+	}
+	defer c.queue.Done(key)
+
+	err := c.handlerEvent(key.(*Event))
+	c.handleEventErr(err, key)
+
+	return true
+}
+
+func (c *EngineController) handleEventErr(err error, event interface{}) {
+	if err == nil {
+		c.queue.Forget(event)
+		return
+	}
+	if c.queue.NumRequeues(event) < maxRetries {
+		klog.Infof("error syncing event %v: %v", event, err)
+		c.queue.AddRateLimited(event)
+		return
+	}
+
+	utilruntime.HandleError(err)
+	klog.Infof("dropping event %q out of the queue: %v", event, err)
+	c.queue.Forget(event)
+}
+
+// handlerEvent handler events observed by the controller.
+func (c *EngineController) handlerEvent(event *Event) error {
+	switch event.Type {
+	case GatewayAdd:
+		return c.handleCreateGateway(event.Obj.(*v1alpha1.Gateway))
+	case GatewayUpdate:
+		return c.handleUpdateGateway(event.Obj.(*v1alpha1.Gateway))
+	case GatewayDelete:
+		return c.handleDeleteGateway(event.Obj.(*v1alpha1.Gateway))
+	}
+	return nil
 }
 
 func (c *EngineController) shouldHandleGateway(gateway *v1alpha1.Gateway) bool {
@@ -108,33 +149,45 @@ func (c *EngineController) shouldHandleGateway(gateway *v1alpha1.Gateway) bool {
 	return false
 }
 
-func (c *EngineController) handleCreateGateway(obj interface{}) {
+func (c *EngineController) addGateway(obj interface{}) {
 	gw := obj.(*v1alpha1.Gateway)
 	if !c.shouldHandleGateway(gw) {
 		klog.InfoS("skip handle create gateway", "gateway", gw.Name, "node", c.nodeName)
 		return
 	}
-	klog.Info("handle create gateway: ", gw.Name)
-	c.handleCreateOrUpdateGateway(gw)
+	c.enqueue(gw, GatewayAdd)
 }
 
-func (c *EngineController) handleUpdateGateway(oldObj interface{}, newObj interface{}) {
+func (c *EngineController) updateGateway(oldObj interface{}, newObj interface{}) {
 	oldGw := oldObj.(*v1alpha1.Gateway)
 	newGw := newObj.(*v1alpha1.Gateway)
 	if !c.shouldHandleGateway(newGw) || oldGw.ResourceVersion == newGw.ResourceVersion {
 		klog.InfoS("skip handle update gateway", "gateway", newGw.Name, "node", c.nodeName)
 		return
 	}
-	klog.Info("handle update gateway: ", newGw.Name)
-	c.handleCreateOrUpdateGateway(newGw)
+	c.enqueue(newGw, GatewayUpdate)
 }
 
-func (c *EngineController) handleDeleteGateway(obj interface{}) {
+func (c *EngineController) deleteGateway(obj interface{}) {
 	gw := obj.(*v1alpha1.Gateway)
 	if !c.shouldHandleGateway(gw) {
 		klog.InfoS("skip handle delete gateway", "gateway", gw.Name, "node", c.nodeName)
 		return
 	}
+	c.enqueue(gw, GatewayDelete)
+}
+
+func (c *EngineController) handleCreateGateway(gw *v1alpha1.Gateway) error {
+	klog.Info("handle create gateway: ", gw.Name)
+	return c.handleCreateOrUpdateGateway(gw)
+}
+
+func (c *EngineController) handleUpdateGateway(gw *v1alpha1.Gateway) error {
+	klog.Info("handle update gateway: ", gw.Name)
+	return c.handleCreateOrUpdateGateway(gw)
+}
+
+func (c *EngineController) handleDeleteGateway(gw *v1alpha1.Gateway) error {
 	klog.Info("handle delete gateway: ", gw.Name)
 	c.synMutex.Lock()
 	defer c.synMutex.Unlock()
@@ -148,9 +201,11 @@ func (c *EngineController) handleDeleteGateway(obj interface{}) {
 		delete(c.otherGateways, gw.Name)
 		c.UpdateNetwork()
 	}
+	// TODO error handling
+	return nil
 }
 
-func (c *EngineController) handleCreateOrUpdateGateway(gateway *v1alpha1.Gateway) {
+func (c *EngineController) handleCreateOrUpdateGateway(gateway *v1alpha1.Gateway) error {
 	c.synMutex.Lock()
 	defer c.synMutex.Unlock()
 
@@ -163,7 +218,9 @@ func (c *EngineController) handleCreateOrUpdateGateway(gateway *v1alpha1.Gateway
 	} else {
 		c.otherGateways[gateway.Name] = EnsureEndpoint(gateway)
 	}
+	// TODO error handling
 	c.UpdateNetwork()
+	return nil
 }
 
 func (c *EngineController) UpdateNetwork() {
@@ -171,7 +228,6 @@ func (c *EngineController) UpdateNetwork() {
 		klog.InfoS("waiting for local gateway sync", "gateway", c.gateway, "endpoint", c.endpoint)
 		return
 	}
-
 	gatewayInfo := &types.Gateway{
 		GatewayIP: net.ParseIP(c.gateway.ID),
 		RemoteIPs: make(map[string]net.IP),

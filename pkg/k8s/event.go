@@ -14,23 +14,17 @@
  * limitations under the License.
  */
 
-package main
+package k8s
 
-import (
-	"flag"
-	"math/rand"
-	"time"
+type EventType string
 
-	"k8s.io/apiserver/pkg/server"
-
-	"github.com/openyurtio/raven/cmd/agent/app"
+const (
+	GatewayAdd    EventType = "GATEWAY_ADD"
+	GatewayUpdate EventType = "GATEWAY_UPDATE"
+	GatewayDelete EventType = "GATEWAY_DELETE"
 )
 
-func main() {
-	rand.Seed(time.Now().UnixNano())
-	cmd := app.NewRavenAgentCommand(server.SetupSignalHandler())
-	cmd.Flags().AddGoFlagSet(flag.CommandLine)
-	if err := cmd.Execute(); err != nil {
-		panic(err)
-	}
+type Event struct {
+	Obj  interface{}
+	Type EventType
 }
