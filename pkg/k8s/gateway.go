@@ -65,23 +65,24 @@ func UpdateCentralEndpoint(local *types.Endpoint, remote *types.Endpoint, others
 }
 
 func EnsureCentralEndpoint(local *types.Endpoint, others map[string]*types.Endpoint) *types.Endpoint {
-	candidates := Merge(others, map[string]*types.Endpoint{local.NodeName: local})
-
-	keys := make([]string, 0)
-	for key := range candidates {
-		keys = append(keys, key)
+	candidates := make([]*types.Endpoint, 0)
+	candidates = append(candidates, local)
+	for _, v := range others {
+		candidates = append(candidates, v)
 	}
-	sort.Strings(keys)
+	// TODO: Maybe cause central ep switch when add or delete a candidate gateway because of sorting
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].NodeName < candidates[j].NodeName
+	})
 
 	var central *types.Endpoint
 	subnets := make([]string, 0)
-	for _, key := range keys {
-		ep := candidates[key]
-		if !ep.NATEnabled {
-			central = ep
+	for i := range candidates {
+		if !candidates[i].NATEnabled {
+			central = candidates[i]
 		}
-		if local.NodeName != ep.NodeName {
-			subnets = append(subnets, ep.Subnets...)
+		if local.NodeName != candidates[i].NodeName {
+			subnets = append(subnets, candidates[i].Subnets...)
 		}
 	}
 	if central != nil {
@@ -96,14 +97,4 @@ func EnsureCentralEndpoint(local *types.Endpoint, others map[string]*types.Endpo
 		}
 	}
 	return nil
-}
-
-func Merge(mObj ...map[string]*types.Endpoint) map[string]*types.Endpoint {
-	newObj := make(map[string]*types.Endpoint)
-	for _, m := range mObj {
-		for k, v := range m {
-			newObj[k] = v
-		}
-	}
-	return newObj
 }
