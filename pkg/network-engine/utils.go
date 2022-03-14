@@ -184,8 +184,8 @@ func vxlanGwIP(cniIP net.IP) (*net.IPNet, error) {
 	if cniIP == nil || cniIP.To4() == nil {
 		return nil, fmt.Errorf("invalid cniIP %v", cniIP)
 	}
-	gwIP := make(net.IP, len(cniIP))
-	copy(gwIP, cniIP)
+	gwIP := make(net.IP, net.IPv4len)
+	copy(gwIP, cniIP.To4())
 	gwIP[0] = vxlanGwPrefix
 	return &net.IPNet{
 		IP:   gwIP,
