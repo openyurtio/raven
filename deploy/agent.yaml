@@ -11,6 +11,9 @@ rules:
       - get
       - list
       - watch
+      - patch
+      - update
+
 ---
 
 apiVersion: v1
