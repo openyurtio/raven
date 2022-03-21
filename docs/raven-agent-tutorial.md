@@ -71,11 +71,9 @@ spec:
   endpoints:
     - nodeName: hhht-node1
       privateIP: 10.48.115.9 
-      publicIP: 121.40.208.7
       natEnabled: true
     - nodeName: hhht-node2
       privateIP: 10.48.115.10
-      publicIP: 121.40.177.135
       natEnabled: true
       
 ---
@@ -88,7 +86,6 @@ spec:
   endpoints:
     - nodeName: master
       privateIP: 10.48.115.8
-      publicIP: 116.62.5.7
       natEnabled: false
       
 ---
@@ -101,11 +98,9 @@ spec:
   endpoints:
     - nodeName: wlcb-node1
       privateIP: 10.48.115.11
-      publicIP: 8.130.28.70
       natEnabled: true
     - nodeName: wlcb-node2
       privateIP: 10.48.115.12
-      publicIP: 8.130.22.154
       natEnabled: true
 
 EOF

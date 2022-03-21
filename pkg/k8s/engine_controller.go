@@ -17,6 +17,7 @@
 package k8s
 
 import (
+	"context"
 	"net"
 	"sync"
 	"time"
@@ -24,14 +25,17 @@ import (
 	"github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/apis/raven/v1alpha1"
 	ravenclientset "github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/client/clientset/versioned"
 	raveninformer "github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/client/informers/externalversions"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
 	networkengine "github.com/openyurtio/raven/pkg/network-engine"
 	"github.com/openyurtio/raven/pkg/types"
+	"github.com/openyurtio/raven/pkg/utils"
 )
 
 const (
@@ -47,6 +51,7 @@ type EngineController struct {
 	otherGateways  map[string]*types.Endpoint
 	otherEndpoints map[string]*v1alpha1.Endpoint
 
+	ravenClient   *ravenclientset.Clientset
 	ravenInformer raveninformer.SharedInformerFactory
 	hasSynced     func() bool
 	queue         workqueue.RateLimitingInterface
@@ -60,11 +65,12 @@ func NewEngineController(nodeName string, ravenClient *ravenclientset.Clientset,
 		nodeName:       nodeName,
 		otherEndpoints: make(map[string]*v1alpha1.Endpoint),
 		otherGateways:  make(map[string]*types.Endpoint),
+		ravenClient:    ravenClient,
 		queue:          workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
 		engine:         engine,
 	}
 
-	ravenInformer := raveninformer.NewSharedInformerFactory(ravenClient, 24*time.Hour)
+	ravenInformer := raveninformer.NewSharedInformerFactory(ctr.ravenClient, 24*time.Hour)
 	ravenInformer.Raven().V1alpha1().Gateways().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    ctr.addGateway,
 		UpdateFunc: ctr.updateGateway,
@@ -149,6 +155,33 @@ func (c *EngineController) shouldHandleGateway(gateway *v1alpha1.Gateway) bool {
 	return false
 }
 
+func (c *EngineController) completeGateway(gateway *v1alpha1.Gateway) error {
+	if gateway.Status.ActiveEndpoint.NodeName != c.nodeName {
+		return nil
+	}
+	publicIP, err := utils.GetPublicIP()
+	if err != nil {
+		return err
+	}
+	// retry to update public ip of gateway
+	err = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		// get gateway from api server
+		apiGw, err := c.ravenClient.RavenV1alpha1().Gateways().Get(context.Background(), gateway.Name, v1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		for k, v := range apiGw.Spec.Endpoints {
+			if v.NodeName == c.nodeName {
+				apiGw.Spec.Endpoints[k].PublicIP = publicIP
+				_, err = c.ravenClient.RavenV1alpha1().Gateways().Update(context.Background(), apiGw, v1.UpdateOptions{})
+				return err
+			}
+		}
+		return nil
+	})
+	return err
+}
+
 func (c *EngineController) addGateway(obj interface{}) {
 	gw := obj.(*v1alpha1.Gateway)
 	if !c.shouldHandleGateway(gw) {
@@ -208,6 +241,10 @@ func (c *EngineController) handleDeleteGateway(gw *v1alpha1.Gateway) error {
 func (c *EngineController) handleCreateOrUpdateGateway(gateway *v1alpha1.Gateway) error {
 	c.synMutex.Lock()
 	defer c.synMutex.Unlock()
+
+	if gateway.Status.ActiveEndpoint.PublicIP == "" {
+		return c.completeGateway(gateway)
+	}
 
 	ep, others, ok := c.parseLocalEndpoints(gateway)
 	if ok {
