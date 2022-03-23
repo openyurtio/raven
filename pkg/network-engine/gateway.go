@@ -34,6 +34,7 @@ import (
 
 const (
 	SecretFile string = "/etc/ipsec.d/raven.secrets"
+	DefaultPSK string = "openyurt-raven"
 )
 
 type libreswanGateway struct {
@@ -62,8 +63,13 @@ func (l *libreswanGateway) Start() {
 		klog.Errorf("fail to create secrets file: %v", err)
 	}
 	defer file.Close()
-	// TODO: secret PSK config
-	fmt.Fprintf(file, "%%any %%any : PSK \"%s\"\n", "alibaba")
+
+	psk := os.Getenv("LIBRESWAN_PSK")
+	if psk == "" {
+		psk = DefaultPSK
+		klog.Warning(fmt.Sprintf("use weak PSK: %s", psk))
+	}
+	fmt.Fprintf(file, "%%any %%any : PSK \"%s\"\n", psk)
 
 	// Run pluto
 	if err := l.runPluto(); err != nil {

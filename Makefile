@@ -1,6 +1,6 @@
 
 # Image URL to use all building/pushing image targets
-IMG ?= njucjc/raven-agent:latest
+IMG ?= openyurt/raven-agent:latest
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -57,8 +57,14 @@ docker-push: ## Push docker image with the agent.
 
 ##@ Deploy
 
-deploy: ## Deploy agent daemon.
-	kubectl apply -f deploy/agent.yaml
+gen-deploy-yaml:
+	bash hack/gen-yaml.sh ${IMG}
 
-.PHONY: deploy
+deploy: gen-deploy-yaml ## Deploy agent daemon.
+	kubectl apply -f _output/yamls/raven-agent.yaml
+
+undeploy:
+	kubectl delete -f _output/yamls/raven-agent.yaml
+
+.PHONY: deploy gen-deploy-yaml undeploy
 

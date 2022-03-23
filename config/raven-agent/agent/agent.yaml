@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: agent-ds
+  namespace: system
+spec:
+  selector:
+    matchLabels:
+      app: raven-agent
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 5%
+  template:
+    metadata:
+      labels:
+        app: raven-agent
+    spec:
+      hostNetwork: true
+      serviceAccountName: agent-account
+      containers:
+        - name: raven-agent
+          image: raven-agent:latest
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: LIBRESWAN_PSK
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secret
+                  key: libreswan-psk

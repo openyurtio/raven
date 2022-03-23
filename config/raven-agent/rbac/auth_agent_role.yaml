@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agent-role
+rules:
+  - apiGroups:
+      - raven.openyurt.io
+    resources:
+      - gateways
+    verbs:
+      - get
+      - list
+      - watch
+      - patch
+      - update

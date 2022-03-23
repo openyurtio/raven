@@ -17,9 +17,8 @@
 
 set -e -x
 
-trap "exit 1" SIGTERM SIGINT
 # disable icmp redirect
-[[ "$(cat /proc/sys/net/ipv4/conf/all/send_redirects)" = 0 ]] || echo 0 > /proc/sys/net/ipv4/conf/all/send_redirects
+[ "$(cat /proc/sys/net/ipv4/conf/all/send_redirects)" = 0 ] || echo 0 > /proc/sys/net/ipv4/conf/all/send_redirects
 
 # run raven agent
 exec agent --node-name=$NODE_NAME
