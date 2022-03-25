@@ -2,10 +2,12 @@
 # Binaries for programs and plugins
 *.exe
 *.exe~
+*.env
 *.dll
 *.so
 *.dylib
 bin
+_output
 testbin/*
 
 # Test binary, build with `go test -c`
