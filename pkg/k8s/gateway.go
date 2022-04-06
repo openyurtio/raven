@@ -26,17 +26,17 @@ import (
 	"github.com/openyurtio/raven/pkg/types"
 )
 
-func EnsureEndpoint(gateway *v1alpha1.Gateway) *types.Endpoint {
+func EnsureEndpoint(gateway *v1alpha1.Gateway, gwNode *v1alpha1.NodeInfo) *types.Endpoint {
 	endpoint := &types.Endpoint{}
-	endpoint.NodeName = gateway.Status.ActiveEndpoint.NodeName
-	endpoint.ID = gateway.Status.ActiveEndpoint.PrivateIP
+	endpoint.NodeName = gwNode.NodeName
+	endpoint.ID = gwNode.PrivateIP
 	endpoint.Vtep = net.ParseIP(gateway.Status.ActiveEndpoint.PublicIP)
 	endpoint.Subnets = make([]string, 0)
-	for _, subnet := range gateway.Status.Subnets {
-		endpoint.Subnets = append(endpoint.Subnets, subnet)
+	for _, n := range gateway.Status.Nodes {
+		endpoint.Subnets = append(endpoint.Subnets, n.Subnet)
 	}
 	endpoint.Subnets, _ = cidrman.MergeCIDRs(endpoint.Subnets)
-	endpoint.NATEnabled = gateway.Status.ActiveEndpoint.NATEnabled
+	endpoint.UnderNAT = gateway.Status.ActiveEndpoint.UnderNAT
 	endpoint.Config = make(map[string]string)
 	for k, v := range gateway.Status.ActiveEndpoint.Config {
 		endpoint.Config[k] = v
@@ -54,13 +54,13 @@ func UpdateCentralEndpoint(local *types.Endpoint, remote *types.Endpoint, others
 		}
 	}
 	return &types.Endpoint{
-		NodeName:   local.NodeName,
-		Subnets:    subnets,
-		ID:         local.ID,
-		Vtep:       local.Vtep,
-		NATEnabled: local.NATEnabled,
-		Config:     local.Config,
-		Central:    true,
+		NodeName: local.NodeName,
+		Subnets:  subnets,
+		ID:       local.ID,
+		Vtep:     local.Vtep,
+		UnderNAT: local.UnderNAT,
+		Config:   local.Config,
+		Central:  true,
 	}
 }
 
@@ -78,7 +78,7 @@ func EnsureCentralEndpoint(local *types.Endpoint, others map[string]*types.Endpo
 	var central *types.Endpoint
 	subnets := make([]string, 0)
 	for i := range candidates {
-		if !candidates[i].NATEnabled {
+		if !candidates[i].UnderNAT {
 			central = candidates[i]
 		}
 		if local.NodeName != candidates[i].NodeName {
@@ -87,13 +87,13 @@ func EnsureCentralEndpoint(local *types.Endpoint, others map[string]*types.Endpo
 	}
 	if central != nil {
 		return &types.Endpoint{
-			NodeName:   central.NodeName,
-			Subnets:    subnets,
-			ID:         central.ID,
-			Vtep:       central.Vtep,
-			NATEnabled: central.NATEnabled,
-			Config:     central.Config,
-			Central:    true,
+			NodeName: central.NodeName,
+			Subnets:  subnets,
+			ID:       central.ID,
+			Vtep:     central.Vtep,
+			UnderNAT: central.UnderNAT,
+			Config:   central.Config,
+			Central:  true,
 		}
 	}
 	return nil

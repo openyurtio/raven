@@ -21,12 +21,12 @@ import (
 )
 
 type Endpoint struct {
-	NodeName   string
-	Subnets    []string
-	ID         string
-	Vtep       net.IP
-	NATEnabled bool
-	Config     map[string]string
+	NodeName string
+	Subnets  []string
+	ID       string
+	Vtep     net.IP
+	UnderNAT bool
+	Config   map[string]string
 
 	Central bool // default false, updating in runtime
 }

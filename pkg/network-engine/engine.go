@@ -26,7 +26,7 @@ type NetworkEngine interface {
 	// Start network engine
 	Start()
 	// Init local network
-	Init(localIP net.IP, localPublicIP net.IP)
+	Init(localIP net.IP, localGatewayPublicIP net.IP)
 	// MTU Minimal MTU in NodePool
 	// NormalNode = InterfaceMTU - VxlanEncapHeader
 	// GatewayNode = min(IntrafaceMTU - IPSecEncapHeader, SamePoolNormalNodesMTU...)
@@ -55,9 +55,9 @@ type Engine struct {
 	libreswanGateway
 }
 
-func (ne *Engine) Init(localIP net.IP, localPublicIP net.IP) {
-	ne.vxlanAgent.Init(localIP, localPublicIP)
-	ne.libreswanGateway.Init(localIP, localPublicIP)
+func (ne *Engine) Init(localIP net.IP, localGatewayPublicIP net.IP) {
+	ne.vxlanAgent.Init(localIP, localGatewayPublicIP)
+	ne.libreswanGateway.Init(localIP, localGatewayPublicIP)
 }
 
 func (ne *Engine) Cleanup() {

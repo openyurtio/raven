@@ -46,10 +46,10 @@ type EngineController struct {
 	synMutex *sync.Mutex
 	nodeName string
 
-	gateway        *types.Endpoint
-	endpoint       *v1alpha1.Endpoint
-	otherGateways  map[string]*types.Endpoint
-	otherEndpoints map[string]*v1alpha1.Endpoint
+	gateway       *types.Endpoint
+	localNode     *v1alpha1.NodeInfo
+	otherGateways map[string]*types.Endpoint
+	otherNodes    map[string]*v1alpha1.NodeInfo
 
 	ravenClient   *ravenclientset.Clientset
 	ravenInformer raveninformer.SharedInformerFactory
@@ -61,13 +61,13 @@ type EngineController struct {
 
 func NewEngineController(nodeName string, ravenClient *ravenclientset.Clientset, engine networkengine.NetworkEngine) (*EngineController, error) {
 	ctr := &EngineController{
-		synMutex:       &sync.Mutex{},
-		nodeName:       nodeName,
-		otherEndpoints: make(map[string]*v1alpha1.Endpoint),
-		otherGateways:  make(map[string]*types.Endpoint),
-		ravenClient:    ravenClient,
-		queue:          workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
-		engine:         engine,
+		synMutex:      &sync.Mutex{},
+		nodeName:      nodeName,
+		otherNodes:    make(map[string]*v1alpha1.NodeInfo),
+		otherGateways: make(map[string]*types.Endpoint),
+		ravenClient:   ravenClient,
+		queue:         workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
+		engine:        engine,
 	}
 
 	ravenInformer := raveninformer.NewSharedInformerFactory(ctr.ravenClient, 24*time.Hour)
@@ -224,11 +224,11 @@ func (c *EngineController) handleDeleteGateway(gw *v1alpha1.Gateway) error {
 	klog.Info("handle delete gateway: ", gw.Name)
 	c.synMutex.Lock()
 	defer c.synMutex.Unlock()
-	_, _, ok := c.parseLocalEndpoints(gw)
+	_, _, _, ok := c.getLocalNodes(gw)
 	if ok { // handle local gateway
 		c.gateway = nil
-		c.endpoint = nil
-		c.otherEndpoints = make(map[string]*v1alpha1.Endpoint)
+		c.localNode = nil
+		c.otherNodes = make(map[string]*v1alpha1.NodeInfo)
 		c.engine.Cleanup()
 	} else {
 		delete(c.otherGateways, gw.Name)
@@ -246,14 +246,14 @@ func (c *EngineController) handleCreateOrUpdateGateway(gateway *v1alpha1.Gateway
 		return c.completeGateway(gateway)
 	}
 
-	ep, others, ok := c.parseLocalEndpoints(gateway)
+	local, gw, others, ok := c.getLocalNodes(gateway)
 	if ok {
-		c.gateway = EnsureEndpoint(gateway)
-		c.endpoint = ep
-		c.otherEndpoints = others
+		c.gateway = EnsureEndpoint(gateway, gw)
+		c.localNode = local
+		c.otherNodes = others
 		delete(c.otherGateways, gateway.Name)
 	} else {
-		c.otherGateways[gateway.Name] = EnsureEndpoint(gateway)
+		c.otherGateways[gateway.Name] = EnsureEndpoint(gateway, gw)
 	}
 	// TODO error handling
 	c.UpdateNetwork()
@@ -261,8 +261,8 @@ func (c *EngineController) handleCreateOrUpdateGateway(gateway *v1alpha1.Gateway
 }
 
 func (c *EngineController) UpdateNetwork() {
-	if c.gateway == nil || c.endpoint == nil {
-		klog.InfoS("waiting for local gateway sync", "gateway", c.gateway, "endpoint", c.endpoint)
+	if c.gateway == nil {
+		klog.InfoS("waiting for local gateway sync", "gateway", c.gateway)
 		return
 	}
 	gatewayInfo := &types.Gateway{
@@ -271,8 +271,8 @@ func (c *EngineController) UpdateNetwork() {
 		Routes:    make(map[string]types.Route),
 	}
 	if c.isGatewayRole() { // role gateway
-		for _, ep := range c.otherEndpoints {
-			gatewayInfo.RemoteIPs[ep.NodeName] = net.ParseIP(ep.PrivateIP)
+		for _, n := range c.otherNodes {
+			gatewayInfo.RemoteIPs[n.NodeName] = net.ParseIP(n.PrivateIP)
 		}
 		klog.InfoS("generating network info", "role", types.NodeRoleGateway, "local-node-name", c.nodeName, "gateway-node-name", c.gateway.NodeName)
 	} else { // role agent
@@ -280,7 +280,7 @@ func (c *EngineController) UpdateNetwork() {
 		gatewayInfo.Routes = types.EnsureRoutes(c.otherGateways, net.ParseIP(c.gateway.ID))
 		klog.InfoS("generating network info", "role", types.NodeRoleAgent, "local-node-name", c.nodeName, "gateway-node-name", c.gateway.NodeName)
 	}
-	c.engine.Init(net.ParseIP(c.endpoint.PrivateIP), net.ParseIP(c.endpoint.PublicIP))
+	c.engine.Init(net.ParseIP(c.localNode.PrivateIP), c.gateway.Vtep)
 	err := c.engine.ConnectToGateway(gatewayInfo)
 	if err != nil {
 		klog.Errorf("error connect to local gateway: %v", err)
@@ -291,7 +291,7 @@ func (c *EngineController) UpdateNetwork() {
 			klog.Warning("error ensure forwarding endpoint")
 			return
 		}
-		if c.gateway.NATEnabled {
+		if c.gateway.UnderNAT {
 			c.ConnectToCentral(central)
 		} else {
 			if c.gateway.NodeName == central.NodeName {
@@ -321,20 +321,23 @@ func (c *EngineController) ConnectToCentral(central *types.Endpoint) {
 	}
 }
 
-func (c *EngineController) parseLocalEndpoints(gateway *v1alpha1.Gateway) (*v1alpha1.Endpoint, map[string]*v1alpha1.Endpoint, bool) {
-	var local *v1alpha1.Endpoint
-	remotes := make(map[string]*v1alpha1.Endpoint)
-	for index, ep := range gateway.Spec.Endpoints {
-		if ep.NodeName == c.nodeName {
-			local = &gateway.Spec.Endpoints[index]
+func (c *EngineController) getLocalNodes(gateway *v1alpha1.Gateway) (local *v1alpha1.NodeInfo, gw *v1alpha1.NodeInfo, remotes map[string]*v1alpha1.NodeInfo, ok bool) {
+	remotes = make(map[string]*v1alpha1.NodeInfo)
+	for index, n := range gateway.Status.Nodes {
+		if n.NodeName == c.nodeName {
+			local = &gateway.Status.Nodes[index]
 		} else {
-			remotes[ep.NodeName] = &gateway.Spec.Endpoints[index]
+			remotes[n.NodeName] = &gateway.Status.Nodes[index]
+		}
+
+		if n.NodeName == gateway.Status.ActiveEndpoint.NodeName {
+			gw = &gateway.Status.Nodes[index]
 		}
 	}
 	if local != nil {
-		return local, remotes, true
+		return local, gw, remotes, true
 	}
-	return local, remotes, false
+	return local, gw, remotes, false
 }
 
 func (c *EngineController) isGatewayRole() bool {

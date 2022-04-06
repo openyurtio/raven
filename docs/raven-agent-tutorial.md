@@ -67,14 +67,11 @@ kind: Gateway
 metadata:
   name: gw-hhht
 spec:
-  backend: libreswan
   endpoints:
     - nodeName: hhht-node1
-      privateIP: 10.48.115.9 
-      natEnabled: true
+      underNAT: true
     - nodeName: hhht-node2
-      privateIP: 10.48.115.10
-      natEnabled: true
+      underNAT: true
       
 ---
 apiVersion: raven.openyurt.io/v1alpha1
@@ -82,11 +79,9 @@ kind: Gateway
 metadata:
   name: gw-cloud
 spec:
-  backend: libreswan
   endpoints:
     - nodeName: master
-      privateIP: 10.48.115.8
-      natEnabled: false
+      underNAT: false
       
 ---
 apiVersion: raven.openyurt.io/v1alpha1
@@ -94,14 +89,11 @@ kind: Gateway
 metadata:
   name: gw-wlcb
 spec:
-  backend: libreswan
   endpoints:
     - nodeName: wlcb-node1
-      privateIP: 10.48.115.11
-      natEnabled: true
+      underNAT: true
     - nodeName: wlcb-node2
-      privateIP: 10.48.115.12
-      natEnabled: true
+      underNAT: true
 
 EOF
 ```
