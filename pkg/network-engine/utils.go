@@ -17,7 +17,7 @@
  * limitations under the License.
  */
 
-package network_engine
+package engine
 
 import (
 	"fmt"
@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	routeTableId = 9027 // yurt
+	routeTableID = 9027 // yurt
 	rulePriority = 100
 
 	vxlanLinkName = "cross-edge"
@@ -217,19 +217,18 @@ func ensurePolicyTable() error {
 		return fmt.Errorf("error list exist rule, err: %v", err)
 	}
 	for _, rule := range ruleList {
-		if rule.Table == routeTableId {
+		if rule.Table == routeTableID {
 			if rulePriority == rule.Priority {
 				return nil
-			} else {
-				err = netlink.RuleDel(&rule)
-				if err != nil {
-					return fmt.Errorf("error delete conflict rule, err: %v", err)
-				}
+			}
+			err = netlink.RuleDel(&rule)
+			if err != nil {
+				return fmt.Errorf("error delete conflict rule, err: %v", err)
 			}
 		}
 	}
 	crossEdgeRule := netlink.NewRule()
-	crossEdgeRule.Table = routeTableId
+	crossEdgeRule.Table = routeTableID
 	crossEdgeRule.Priority = rulePriority
 	crossEdgeRule.Family = netlink.FAMILY_V4
 	if err = netlink.RuleAdd(crossEdgeRule); err != nil {
@@ -240,7 +239,7 @@ func ensurePolicyTable() error {
 
 func deletePolicyTable() error {
 	crossEdgeRule := netlink.NewRule()
-	crossEdgeRule.Table = routeTableId
+	crossEdgeRule.Table = routeTableID
 	crossEdgeRule.Priority = rulePriority
 	crossEdgeRule.Family = netlink.FAMILY_V4
 	if err := netlink.RuleDel(crossEdgeRule); err != nil && !os.IsNotExist(err) {

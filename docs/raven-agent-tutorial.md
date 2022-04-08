@@ -1,12 +1,13 @@
-# Raven Agent Tutorial 
+# Raven Agent Tutorial
 
-This document introduces how to install raven and use raven to enhance edge-edge and edge-cloud network communication in an edge cluster. 
+This document introduces how to install raven and use raven to enhance edge-edge and edge-cloud network communication in an edge cluster.
 
 Suppose you have an edge kubernetes cluster with nodes in different physical regions, and already deploy the raven-controller-manager in this cluster, the details of raven-controller-manager are in [here](https://github.com/openyurtio/raven-controller-manager/blob/main/README.md).
 
 ## Label nodes in different physical regions
 
 As follows, suppose the cluster has five nodes, located in three different regions, where the node `master` is cloud node.
+
 ``` bash
 $ kubectl get nodes -o wide
 
@@ -21,6 +22,7 @@ wlcb-node2   Ready    <none>   20d   v1.16.2   10.48.115.12
 We use a [Gateway](https://github.com/openyurtio/raven-controller-manager/blob/main/pkg/ravencontroller/apis/raven/v1alpha1/gateway_types.go) CR to manage nodes in different physical regions, and label nodes to indicate which `Gateway` these nodes are managed by.
 
 For example, We label nodes in region `cn-huhehaote` with value `gw-hhht`, indicating that these nodes are managed by the `gw-hhht` gateway.
+
 ```bash
 $ kubectl label nodes hhht-node1 hhht-node2 raven.openyurt.io/gateway=gw-hhht
 hhht-node1 labeled
@@ -28,6 +30,7 @@ hhht-node2 labeled
 ```
 
 Similarly, we label node in `cloud` with value `gw-cloud`, and nodes in region `cn-wulanchabu` with value `gw-wlcb`.
+
 ```bash
 $ kubectl label nodes master raven.openyurt.io/gateway=gw-cloud
 master labeled
@@ -40,12 +43,14 @@ wlcb-node2 labeled
 ```
 
 ### install raven agent
+
 ```bash
-$ cd raven
-$ make deploy
+cd raven
+make deploy
 ```
 
 Wait for the raven agent daemon to be created successfully
+
 ``` bash
 $ kubectl get pod -n kube-system | grep raven-agent-ds
 raven-agent-ds-2jw47                           1/1     Running   0          91s
@@ -57,9 +62,10 @@ raven-agent-ds-rlb9q                           1/1     Running   0          91s
 
 ## How to Use
 
-### Gateways 
+### Gateways
 
 - 1 create gateways
+
 ```bash
 $ cat <<EOF | kubectl apply -f -
 apiVersion: raven.openyurt.io/v1alpha1
@@ -99,6 +105,7 @@ EOF
 ```
 
 - 2 Get gateways
+
 ```bash
 $ kubectl get gateways
 
@@ -108,9 +115,10 @@ gw-master master
 gw-wlcb   wlcb-node1
 ```
 
- ### Test pod-to-pod networking
+### Test pod-to-pod networking
 
 - 1 Create test pod
+
 ```bash
 $ cat <<EOF | kubectl apply -f -
 apiVersion: v1

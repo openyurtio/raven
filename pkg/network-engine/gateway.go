@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package network_engine
+package engine
 
 import (
 	"crypto/sha256"
