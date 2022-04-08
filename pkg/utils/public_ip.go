@@ -45,10 +45,10 @@ func GetPublicIP() (string, error) {
 
 func getFromAPI(api string) (string, error) {
 	resp, err := http.Get(api)
-	defer resp.Body.Close()
 	if err != nil {
 		return "", fmt.Errorf("retrieving public ip from %s: %v", api, err)
 	}
+	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("reading api response from %s: %v", api, err)

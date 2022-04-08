@@ -9,6 +9,7 @@ Raven is component of the OpenYurt to enhance cluster networking capabilities. T
 </div>
 
 The above figure demonstrates the core Raven architecture. The major components consist of:
+
 - **Raven Controller Manager**: It is a standard k8s controller that enhances cluster networking capabilities in edge computing. For examples, electing a `gateway` node for each edge base on node conditions.
 - **Raven Agent**: A node daemon that serves as a proxy for the traffic of edge-cloud and edge-edge communication. It dynamically configures routing information or VPN connections on each node, according to the node role (`normal` node or `gateway` node).
 
@@ -18,8 +19,7 @@ For a complete example, please check out the [tutorial](docs/raven-agent-tutoria
 
 ## Contributing
 
-Contributions are welcome, whether by creating new issues or pull requests. See 
-our [contributing document](https://github.com/openyurtio/openyurt/blob/master/CONTRIBUTING.md) to get started.
+Contributions are welcome, whether by creating new issues or pull requests. See our [contributing document](https://github.com/openyurtio/openyurt/blob/master/CONTRIBUTING.md) to get started.
 
 ## Contact
 
@@ -33,7 +33,4 @@ our [contributing document](https://github.com/openyurtio/openyurt/blob/master/C
 
 ## License
 
-Raven is under the Apache 2.0 license. See the [LICENSE](LICENSE) file 
-for details. Certain implementations in Raven rely on the existing code 
-from [Kubernetes](https://github.com/kubernetes/kubernetes) the credits go to the 
-original authors.
+Raven is under the Apache 2.0 license. See the [LICENSE](LICENSE) file for details. Certain implementations in Raven rely on the existing code from [Kubernetes](https://github.com/kubernetes/kubernetes) the credits go to the original authors.
