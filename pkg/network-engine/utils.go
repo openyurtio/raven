@@ -36,7 +36,7 @@ const (
 	routeTableId = 9027 // yurt
 	rulePriority = 100
 
-	vxlanLinkName = "cross-edge"
+	vxlanLinkName = "raven"
 	vxlanEncapLen = 50
 	vxlanID       = 200
 	vxlanPort     = 8472
