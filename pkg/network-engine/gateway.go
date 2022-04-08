@@ -45,9 +45,9 @@ type libreswanGateway struct {
 	central       bool
 }
 
-func (l *libreswanGateway) Init(localIP net.IP, localPublicIP net.IP) {
+func (l *libreswanGateway) Init(localIP net.IP, localGatewayPublicIP net.IP) {
 	l.localIP = localIP
-	l.localPublicIP = localPublicIP
+	l.localPublicIP = localGatewayPublicIP
 }
 
 func (l *libreswanGateway) Start() {
