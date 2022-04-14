@@ -33,7 +33,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
-	networkengine "github.com/openyurtio/raven/pkg/network-engine"
+	"github.com/openyurtio/raven/pkg/networkengine"
 	"github.com/openyurtio/raven/pkg/types"
 	"github.com/openyurtio/raven/pkg/utils"
 )

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package network_engine
+package networkengine
 
 import (
 	"fmt"
@@ -99,7 +99,7 @@ func (agent *vxlanAgent) ConnectToGateway(gateway *types.Gateway) error {
 		return err
 	}
 
-	err = ensureRoutes(gateway.Routes, routeTableId, vxLink)
+	err = ensureRoutes(gateway.Routes, routeTableID, vxLink)
 	if err != nil {
 		return err
 	}
