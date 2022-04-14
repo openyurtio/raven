@@ -24,7 +24,7 @@ import (
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/cmd/agent/app/options"
 	"github.com/openyurtio/raven/pkg/k8s"
-	networkengine "github.com/openyurtio/raven/pkg/networkengine"
+	"github.com/openyurtio/raven/pkg/networkengine"
 )
 
 // NewRavenAgentCommand creates a new raven agent command
