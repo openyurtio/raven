@@ -18,14 +18,16 @@ package k8s
 
 import (
 	"context"
-	"net"
-	"sync"
+	"reflect"
 	"time"
 
+	"github.com/EvilSuperstars/go-cidrman"
 	"github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/apis/raven/v1alpha1"
 	ravenclientset "github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/client/clientset/versioned"
 	raveninformer "github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/client/informers/externalversions"
+	ravenlister "github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/client/listers/raven/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
@@ -33,7 +35,8 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
-	"github.com/openyurtio/raven/pkg/networkengine"
+	"github.com/openyurtio/raven/pkg/networkengine/routedriver"
+	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
 	"github.com/openyurtio/raven/pkg/types"
 	"github.com/openyurtio/raven/pkg/utils"
 )
@@ -43,31 +46,31 @@ const (
 )
 
 type EngineController struct {
-	synMutex *sync.Mutex
-	nodeName string
-
-	gateway       *types.Endpoint
-	localNode     *v1alpha1.NodeInfo
-	otherGateways map[string]*types.Endpoint
-	otherNodes    map[string]*v1alpha1.NodeInfo
+	nodeName  string
+	nodeInfos map[types.NodeName]*v1alpha1.NodeInfo
+	network   *types.Network
+	// lastSeenNetwork tracks the last seen Network.
+	lastSeenNetwork *types.Network
 
 	ravenClient   *ravenclientset.Clientset
 	ravenInformer raveninformer.SharedInformerFactory
+
+	gatewayLister ravenlister.GatewayLister
 	hasSynced     func() bool
 	queue         workqueue.RateLimitingInterface
 
-	engine networkengine.NetworkEngine
+	routeDriver routedriver.Driver
+	vpnDriver   vpndriver.Driver
 }
 
-func NewEngineController(nodeName string, ravenClient *ravenclientset.Clientset, engine networkengine.NetworkEngine) (*EngineController, error) {
+func NewEngineController(nodeName string, ravenClient *ravenclientset.Clientset,
+	routeDriver routedriver.Driver, vpnDriver vpndriver.Driver) (*EngineController, error) {
 	ctr := &EngineController{
-		synMutex:      &sync.Mutex{},
-		nodeName:      nodeName,
-		otherNodes:    make(map[string]*v1alpha1.NodeInfo),
-		otherGateways: make(map[string]*types.Endpoint),
-		ravenClient:   ravenClient,
-		queue:         workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
-		engine:        engine,
+		nodeName:    nodeName,
+		ravenClient: ravenClient,
+		queue:       workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
+		routeDriver: routeDriver,
+		vpnDriver:   vpnDriver,
 	}
 
 	ravenInformer := raveninformer.NewSharedInformerFactory(ctr.ravenClient, 24*time.Hour)
@@ -77,6 +80,7 @@ func NewEngineController(nodeName string, ravenClient *ravenclientset.Clientset,
 		DeleteFunc: ctr.deleteGateway,
 	})
 	ctr.ravenInformer = ravenInformer
+	ctr.gatewayLister = ravenInformer.Raven().V1alpha1().Gateways().Lister()
 	ctr.hasSynced = ravenInformer.Raven().V1alpha1().Gateways().Informer().HasSynced
 
 	return ctr, nil
@@ -98,11 +102,8 @@ func (c *EngineController) worker() {
 	}
 }
 
-func (c *EngineController) enqueue(obj *v1alpha1.Gateway, eventType EventType) {
-	c.queue.Add(&Event{
-		Obj:  obj,
-		Type: eventType,
-	})
+func (c *EngineController) enqueue(obj *v1alpha1.Gateway) {
+	c.queue.Add(obj.Name)
 }
 
 func (c *EngineController) processNextWorkItem() bool {
@@ -112,10 +113,120 @@ func (c *EngineController) processNextWorkItem() bool {
 	}
 	defer c.queue.Done(key)
 
-	err := c.handlerEvent(key.(*Event))
+	err := c.sync()
 	c.handleEventErr(err, key)
 
 	return true
+}
+
+func getMergedSubnets(nodeInfo []v1alpha1.NodeInfo) []string {
+	subnets := make([]string, 0)
+	for _, n := range nodeInfo {
+		subnets = append(subnets, n.Subnet)
+	}
+	subnets, _ = cidrman.MergeCIDRs(subnets)
+	return subnets
+}
+
+// sync syncs full state according to the gateway list.
+func (c *EngineController) sync() error {
+	gws, err := c.gatewayLister.List(labels.Everything())
+	if err != nil {
+		return err
+	}
+	// As we are going to rebuild a full state, so cleanup before proceeding.
+	c.network = &types.Network{
+		LocalEndpoint:   nil,
+		RemoteEndpoints: make(map[types.GatewayName]*types.Endpoint),
+		LocalNodeInfo:   make(map[types.NodeName]*v1alpha1.NodeInfo),
+		RemoteNodeInfo:  make(map[types.NodeName]*v1alpha1.NodeInfo),
+	}
+	c.nodeInfos = make(map[types.NodeName]*v1alpha1.NodeInfo)
+
+	for _, gw := range gws {
+		// try to update public IP if empty.
+		if ep := gw.Status.ActiveEndpoint; ep != nil && ep.PublicIP == "" {
+			err := c.completeGateway(gw)
+			if err != nil {
+				klog.ErrorS(err, "error completing gateway", "gateway", klog.KObj(gw))
+			}
+			continue
+		}
+		if !c.shouldHandleGateway(gw) {
+			continue
+		}
+		c.syncNodeInfo(gw.Status.Nodes)
+	}
+	for _, gw := range gws {
+		if !c.shouldHandleGateway(gw) {
+			continue
+		}
+		c.syncGateway(gw)
+	}
+	if reflect.DeepEqual(c.network, c.lastSeenNetwork) {
+		klog.Info("network not changed, skip to process")
+		return nil
+	}
+	nw := c.network.Copy()
+	klog.InfoS("applying network", "localEndpoint", nw.LocalEndpoint, "remoteEndpoint", nw.RemoteEndpoints)
+	err = c.vpnDriver.Apply(nw)
+	if err != nil {
+		return err
+	}
+	err = c.routeDriver.Apply(nw)
+	if err != nil {
+		return err
+	}
+	// Only update lastSeenNetwork when all operations succeeded.
+	c.lastSeenNetwork = c.network
+	return nil
+}
+
+func (c *EngineController) syncNodeInfo(nodes []v1alpha1.NodeInfo) {
+	for _, v := range nodes {
+		c.nodeInfos[types.NodeName(v.NodeName)] = v.DeepCopy()
+	}
+}
+
+func (c *EngineController) syncGateway(gw *v1alpha1.Gateway) {
+	aep := gw.Status.ActiveEndpoint
+	subnets := getMergedSubnets(gw.Status.Nodes)
+	cfg := make(map[string]string)
+	for k := range aep.Config {
+		cfg[k] = aep.Config[k]
+	}
+	var nodeInfo *v1alpha1.NodeInfo
+	if nodeInfo = c.nodeInfos[types.NodeName(aep.NodeName)]; nodeInfo == nil {
+		klog.Errorf("node %s is found in Endpoint but not existed in NodeInfo", aep.NodeName)
+		return
+	}
+	ep := &types.Endpoint{
+		GatewayName: types.GatewayName(gw.Name),
+		NodeName:    types.NodeName(aep.NodeName),
+		Subnets:     subnets,
+		PrivateIP:   nodeInfo.PrivateIP,
+		PublicIP:    aep.PublicIP,
+		UnderNAT:    aep.UnderNAT,
+		Config:      cfg,
+	}
+	var isLocalGateway bool
+	defer func() {
+		for _, v := range gw.Status.Nodes {
+			if isLocalGateway {
+				c.network.LocalNodeInfo[types.NodeName(v.NodeName)] = v.DeepCopy()
+			} else {
+				c.network.RemoteNodeInfo[types.NodeName(v.NodeName)] = v.DeepCopy()
+			}
+		}
+	}()
+	for _, v := range gw.Status.Nodes {
+		if v.NodeName == c.nodeName {
+			c.network.LocalEndpoint = ep
+			isLocalGateway = true
+			return
+		}
+	}
+	c.network.RemoteEndpoints[types.GatewayName(gw.Name)] = ep
 }
 
 func (c *EngineController) handleEventErr(err error, event interface{}) {
@@ -134,25 +245,16 @@ func (c *EngineController) handleEventErr(err error, event interface{}) {
 	c.queue.Forget(event)
 }
 
-// handlerEvent handler events observed by the controller.
-func (c *EngineController) handlerEvent(event *Event) error {
-	switch event.Type {
-	case GatewayAdd:
-		return c.handleCreateGateway(event.Obj.(*v1alpha1.Gateway))
-	case GatewayUpdate:
-		return c.handleUpdateGateway(event.Obj.(*v1alpha1.Gateway))
-	case GatewayDelete:
-		return c.handleDeleteGateway(event.Obj.(*v1alpha1.Gateway))
-	}
-	return nil
-}
-
 func (c *EngineController) shouldHandleGateway(gateway *v1alpha1.Gateway) bool {
-	if gateway.Status.ActiveEndpoint != nil {
-		return true
+	if gateway.Status.ActiveEndpoint == nil {
+		klog.InfoS("no active endpoint , waiting for sync", "gateway", klog.KObj(gateway))
+		return false
 	}
-	klog.Info("waiting for gateway to sync")
-	return false
+	if gateway.Status.ActiveEndpoint.PublicIP == "" {
+		klog.InfoS("no public IP for gateway, waiting for sync", "gateway", klog.KObj(gateway))
+		return false
+	}
+	return true
 }
 
 func (c *EngineController) completeGateway(gateway *v1alpha1.Gateway) error {
@@ -163,9 +265,9 @@ func (c *EngineController) completeGateway(gateway *v1alpha1.Gateway) error {
 	if err != nil {
 		return err
 	}
-	// retry to update public ip of gateway
+	// retry to update public ip of localGateway
 	err = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		// get gateway from api server
+		// get localGateway from api server
 		apiGw, err := c.ravenClient.RavenV1alpha1().Gateways().Get(context.Background(), gateway.Name, v1.GetOptions{})
 		if err != nil {
 			return err
@@ -184,162 +286,23 @@ func (c *EngineController) completeGateway(gateway *v1alpha1.Gateway) error {
 
 func (c *EngineController) addGateway(obj interface{}) {
 	gw := obj.(*v1alpha1.Gateway)
-	if !c.shouldHandleGateway(gw) {
-		klog.InfoS("skip handle create gateway", "gateway", gw.Name, "node", c.nodeName)
-		return
-	}
-	c.enqueue(gw, GatewayAdd)
+	klog.V(4).InfoS("adding gateway", "gateway", klog.KObj(gw))
+	c.enqueue(gw)
 }
 
 func (c *EngineController) updateGateway(oldObj interface{}, newObj interface{}) {
 	oldGw := oldObj.(*v1alpha1.Gateway)
 	newGw := newObj.(*v1alpha1.Gateway)
-	if !c.shouldHandleGateway(newGw) || oldGw.ResourceVersion == newGw.ResourceVersion {
-		klog.InfoS("skip handle update gateway", "gateway", newGw.Name, "node", c.nodeName)
+	if oldGw.ResourceVersion == newGw.ResourceVersion {
+		klog.InfoS("skip handle update gateway", "gateway", klog.KObj(newGw))
 		return
 	}
-	c.enqueue(newGw, GatewayUpdate)
+	klog.V(4).InfoS("updating gateway", "gateway", klog.KObj(newGw))
+	c.enqueue(newGw)
 }
 
 func (c *EngineController) deleteGateway(obj interface{}) {
 	gw := obj.(*v1alpha1.Gateway)
-	if !c.shouldHandleGateway(gw) {
-		klog.InfoS("skip handle delete gateway", "gateway", gw.Name, "node", c.nodeName)
-		return
-	}
-	c.enqueue(gw, GatewayDelete)
-}
-
-func (c *EngineController) handleCreateGateway(gw *v1alpha1.Gateway) error {
-	klog.Info("handle create gateway: ", gw.Name)
-	return c.handleCreateOrUpdateGateway(gw)
-}
-
-func (c *EngineController) handleUpdateGateway(gw *v1alpha1.Gateway) error {
-	klog.Info("handle update gateway: ", gw.Name)
-	return c.handleCreateOrUpdateGateway(gw)
-}
-
-func (c *EngineController) handleDeleteGateway(gw *v1alpha1.Gateway) error {
-	klog.Info("handle delete gateway: ", gw.Name)
-	c.synMutex.Lock()
-	defer c.synMutex.Unlock()
-	_, _, _, ok := c.getLocalNodes(gw)
-	if ok { // handle local gateway
-		c.gateway = nil
-		c.localNode = nil
-		c.otherNodes = make(map[string]*v1alpha1.NodeInfo)
-		c.engine.Cleanup()
-	} else {
-		delete(c.otherGateways, gw.Name)
-		c.UpdateNetwork()
-	}
-	// TODO error handling
-	return nil
-}
-
-func (c *EngineController) handleCreateOrUpdateGateway(gateway *v1alpha1.Gateway) error {
-	c.synMutex.Lock()
-	defer c.synMutex.Unlock()
-
-	if gateway.Status.ActiveEndpoint.PublicIP == "" {
-		return c.completeGateway(gateway)
-	}
-
-	local, gw, others, ok := c.getLocalNodes(gateway)
-	if ok {
-		c.gateway = EnsureEndpoint(gateway, gw)
-		c.localNode = local
-		c.otherNodes = others
-		delete(c.otherGateways, gateway.Name)
-	} else {
-		c.otherGateways[gateway.Name] = EnsureEndpoint(gateway, gw)
-	}
-	// TODO error handling
-	c.UpdateNetwork()
-	return nil
-}
-
-func (c *EngineController) UpdateNetwork() {
-	if c.gateway == nil {
-		klog.InfoS("waiting for local gateway sync", "gateway", c.gateway)
-		return
-	}
-	gatewayInfo := &types.Gateway{
-		GatewayIP: net.ParseIP(c.gateway.ID),
-		RemoteIPs: make(map[string]net.IP),
-		Routes:    make(map[string]types.Route),
-	}
-	if c.isGatewayRole() { // role gateway
-		for _, n := range c.otherNodes {
-			gatewayInfo.RemoteIPs[n.NodeName] = net.ParseIP(n.PrivateIP)
-		}
-		klog.InfoS("generating network info", "role", types.NodeRoleGateway, "local-node-name", c.nodeName, "gateway-node-name", c.gateway.NodeName)
-	} else { // role agent
-		gatewayInfo.RemoteIPs[c.gateway.NodeName] = net.ParseIP(c.gateway.ID)
-		gatewayInfo.Routes = types.EnsureRoutes(c.otherGateways, net.ParseIP(c.gateway.ID))
-		klog.InfoS("generating network info", "role", types.NodeRoleAgent, "local-node-name", c.nodeName, "gateway-node-name", c.gateway.NodeName)
-	}
-	c.engine.Init(net.ParseIP(c.localNode.PrivateIP), c.gateway.Vtep)
-	err := c.engine.ConnectToGateway(gatewayInfo)
-	if err != nil {
-		klog.Errorf("error connect to local gateway: %v", err)
-	}
-	if c.isGatewayRole() { // role gateway
-		central := EnsureCentralEndpoint(c.gateway, c.otherGateways)
-		if central == nil {
-			klog.Warning("error ensure forwarding endpoint")
-			return
-		}
-		if c.gateway.UnderNAT {
-			c.ConnectToCentral(central)
-		} else {
-			if c.gateway.NodeName == central.NodeName {
-				c.ConnectToEdge(c.otherGateways)
-			} else {
-				c.ConnectToCentral(central)
-			}
-		}
-	}
-}
-
-func (c *EngineController) ConnectToEdge(gateways map[string]*types.Endpoint) {
-	c.engine.EnsureEndpoints(gateways)
-	for _, ep := range gateways {
-		c.engine.UpdateLocalEndpoint(UpdateCentralEndpoint(c.gateway, ep, gateways))
-		if err := c.engine.ConnectToEndpoint(ep); err != nil {
-			klog.Errorf("error connect to remote gateway: %v", err)
-		}
-	}
-}
-
-func (c *EngineController) ConnectToCentral(central *types.Endpoint) {
-	c.engine.UpdateLocalEndpoint(c.gateway)
-	c.engine.EnsureEndpoints(map[string]*types.Endpoint{central.NodeName: central})
-	if err := c.engine.ConnectToEndpoint(central); err != nil {
-		klog.Errorf("error connect to central gateway: %v", err)
-	}
-}
-
-func (c *EngineController) getLocalNodes(gateway *v1alpha1.Gateway) (local *v1alpha1.NodeInfo, gw *v1alpha1.NodeInfo, remotes map[string]*v1alpha1.NodeInfo, ok bool) {
-	remotes = make(map[string]*v1alpha1.NodeInfo)
-	for index, n := range gateway.Status.Nodes {
-		if n.NodeName == c.nodeName {
-			local = &gateway.Status.Nodes[index]
-		} else {
-			remotes[n.NodeName] = &gateway.Status.Nodes[index]
-		}
-
-		if n.NodeName == gateway.Status.ActiveEndpoint.NodeName {
-			gw = &gateway.Status.Nodes[index]
-		}
-	}
-	if local != nil {
-		return local, gw, remotes, true
-	}
-	return local, gw, remotes, false
-}
-
-func (c *EngineController) isGatewayRole() bool {
-	return c.gateway.NodeName == c.nodeName
+	klog.InfoS("deleting gateway", "gateway", klog.KObj(gw))
+	c.enqueue(gw)
 }

@@ -11,12 +11,16 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
+	"github.com/openyurtio/raven/pkg/networkengine/routedriver/vxlan"
+	"github.com/openyurtio/raven/pkg/networkengine/vpndriver/libreswan"
 )
 
 // AgentOptions has the information that required by the raven agent
 type AgentOptions struct {
-	NodeName   string
-	Kubeconfig string
+	NodeName    string
+	Kubeconfig  string
+	VPNDriver   string
+	RouteDriver string
 }
 
 // Validate validates the AgentOptions
@@ -34,13 +38,17 @@ func (o *AgentOptions) Validate() error {
 func (o *AgentOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.NodeName, "node-name", o.NodeName, "The name of the node.")
 	fs.StringVar(&o.Kubeconfig, "kubeconfig", o.Kubeconfig, "Path to the kubeconfig file.")
+	fs.StringVar(&o.VPNDriver, "vpn-driver", o.VPNDriver, `The VPN driver name. (default "libreswan")`)
+	fs.StringVar(&o.RouteDriver, "route-driver", o.RouteDriver, `The Route driver name. (default "vxlan")`)
 }
 
 // Config return a raven agent config objective
 func (o *AgentOptions) Config() (*config.Config, error) {
 	var err error
 	c := &config.Config{
-		NodeName: o.NodeName,
+		NodeName:    o.NodeName,
+		VPNDriver:   o.VPNDriver,
+		RouteDriver: o.RouteDriver,
 	}
 	cfg, err := clientcmd.BuildConfigFromFlags("", o.Kubeconfig)
 	if err != nil {
@@ -48,7 +56,12 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 	}
 	cfg = restclient.AddUserAgent(cfg, "raven-agent")
 	c.Kubeconfig = cfg
-
 	c.RavenClient = ravenclientset.NewForConfigOrDie(cfg)
+	if c.VPNDriver == "" {
+		c.VPNDriver = libreswan.DriverName
+	}
+	if c.RouteDriver == "" {
+		c.RouteDriver = vxlan.DriverName
+	}
 	return c, err
 }
