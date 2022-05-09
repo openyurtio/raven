@@ -20,11 +20,13 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"k8s.io/klog/v2"
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/cmd/agent/app/options"
 	"github.com/openyurtio/raven/pkg/k8s"
-	"github.com/openyurtio/raven/pkg/networkengine"
+	"github.com/openyurtio/raven/pkg/networkengine/routedriver"
+	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
 )
 
 // NewRavenAgentCommand creates a new raven agent command
@@ -54,16 +56,38 @@ func NewRavenAgentCommand(stopCh <-chan struct{}) *cobra.Command {
 
 // Run starts the raven-agent
 func Run(cfg *config.CompletedConfig, stopCh <-chan struct{}) error {
-	// start the network engine
-	engine := networkengine.NewNetworkEngine()
-	engine.Start()
-
+	routeDriver, err := routedriver.New(cfg.RouteDriver, cfg.Config)
+	if err != nil {
+		return fmt.Errorf("fail to create route driver: %s, %s", cfg.RouteDriver, err)
+	}
+	err = routeDriver.Init()
+	if err != nil {
+		return fmt.Errorf("fail to initialize route driver: %s, %s", cfg.RouteDriver, err)
+	}
+	klog.Infof("route driver %s initialized", cfg.RouteDriver)
+	vpnDriver, err := vpndriver.New(cfg.VPNDriver, cfg.Config)
+	if err != nil {
+		return fmt.Errorf("fail to create vpn driver: %s, %s", cfg.VPNDriver, err)
+	}
+	err = vpnDriver.Init()
+	if err != nil {
+		return fmt.Errorf("fail to initialize vpn driver: %s, %s", cfg.VPNDriver, err)
+	}
+	klog.Infof("VPN driver %s initialized", cfg.VPNDriver)
 	// start network engine controller
-	ec, err := k8s.NewEngineController(cfg.NodeName, cfg.RavenClient, engine)
+	ec, err := k8s.NewEngineController(cfg.NodeName, cfg.RavenClient, routeDriver, vpnDriver)
 	if err != nil {
 		return fmt.Errorf("could not create network engine controller: %s", err)
 	}
 	ec.Start(stopCh)
 	<-stopCh
+	err = routeDriver.Cleanup()
+	if err != nil {
+		klog.Errorf("route driver fail to cleanup: %s", err)
+	}
+	err = vpnDriver.Cleanup()
+	if err != nil {
+		klog.Errorf("vpn driver fail to cleanup: %s", err)
+	}
 	return nil
 }

@@ -26,6 +26,8 @@ type Config struct {
 	NodeName    string
 	RavenClient *ravenclientset.Clientset
 	Kubeconfig  *rest.Config
+	VPNDriver   string
+	RouteDriver string
 }
 
 type completedConfig struct {
