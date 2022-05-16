@@ -94,7 +94,23 @@ func (c *EngineController) Start(stopCh <-chan struct{}) {
 		return
 	}
 	go wait.Until(c.worker, time.Second, stopCh)
+	go wait.Until(c.completeGatewayWorker, time.Second, stopCh)
 	klog.Info("engine controller successfully start")
+}
+
+func (c *EngineController) completeGatewayWorker() {
+	if c.lastSeenNetwork == nil || c.lastSeenNetwork.LocalEndpoint == nil {
+		return
+	}
+	gw, err := c.gatewayLister.Get(string(c.lastSeenNetwork.LocalEndpoint.GatewayName))
+	if err != nil {
+		klog.Error("error get local gateway: %v", err)
+		return
+	}
+	err = c.completeGateway(gw)
+	if err != nil {
+		klog.ErrorS(err, "error completing gateway", "gateway", klog.KObj(gw))
+	}
 }
 
 func (c *EngineController) worker() {
@@ -258,12 +274,16 @@ func (c *EngineController) shouldHandleGateway(gateway *v1alpha1.Gateway) bool {
 }
 
 func (c *EngineController) completeGateway(gateway *v1alpha1.Gateway) error {
-	if gateway.Status.ActiveEndpoint.NodeName != c.nodeName {
+	if gateway.Status.ActiveEndpoint == nil || gateway.Status.ActiveEndpoint.NodeName != c.nodeName {
 		return nil
 	}
 	publicIP, err := utils.GetPublicIP()
 	if err != nil {
 		return err
+	}
+
+	if publicIP == gateway.Status.ActiveEndpoint.PublicIP {
+		return nil
 	}
 	// retry to update public ip of localGateway
 	err = retry.RetryOnConflict(retry.DefaultBackoff, func() error {

@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
+	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
 	"github.com/openyurtio/raven/pkg/types"
 )
 
@@ -65,8 +66,14 @@ func (w *whackMock) whackCmd(args ...string) error {
 
 func TestLibreswan_Apply(t *testing.T) {
 	localGwIP := "192.168.0.1"
+	localGwPublicIP := "1.1.1.1"
+
 	remoteGw1IP := "192.168.0.2"
+	remoteGw1PublicIP := "1.1.1.2"
+
 	remoteGw2IP := "192.168.0.3"
+	remoteGw2PublicIP := "1.1.1.3"
+
 	localSubnet := []string{"10.244.0.0/24", "10.244.1.0/24"}
 	remoteGw1Subnets := []string{"10.244.2.0/24", "10.244.3.0/24"}
 	remoteGw2Subnets := []string{"10.244.4.0/24", "10.244.5.0/24"}
@@ -84,13 +91,13 @@ func TestLibreswan_Apply(t *testing.T) {
 			nodeName: "localGwNode",
 			expectedConnName: map[string]struct{}{
 				// localGw to remoteGw1
-				connectionName(localGwIP, remoteGw1IP, localSubnet[0], remoteGw1Subnets[0]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[0], remoteGw1Subnets[1]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[1], remoteGw1Subnets[0]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[1], remoteGw1Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[1]): {},
 				// localGw to remoteGw2
-				connectionName(localGwIP, remoteGw2IP, localSubnet[0], remoteGw2Subnets[0]): {},
-				connectionName(localGwIP, remoteGw2IP, localSubnet[1], remoteGw2Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[0]): {},
 			},
 			network: &types.Network{
 				LocalEndpoint: &types.Endpoint{
@@ -98,7 +105,7 @@ func TestLibreswan_Apply(t *testing.T) {
 					NodeName:    "localGwNode",
 					Subnets:     localSubnet,
 					PrivateIP:   localGwIP,
-					PublicIP:    "1.1.1.1",
+					PublicIP:    localGwPublicIP,
 					UnderNAT:    false,
 				},
 				RemoteEndpoints: map[types.GatewayName]*types.Endpoint{
@@ -107,7 +114,7 @@ func TestLibreswan_Apply(t *testing.T) {
 						NodeName:    "remoteNode1",
 						Subnets:     remoteGw1Subnets,
 						PrivateIP:   remoteGw1IP,
-						PublicIP:    "1.1.1.2",
+						PublicIP:    remoteGw1PublicIP,
 						UnderNAT:    false,
 					},
 					"remoteGw2": {
@@ -115,7 +122,7 @@ func TestLibreswan_Apply(t *testing.T) {
 						NodeName:    "remoteNode2",
 						Subnets:     remoteGw2Subnets[:1],
 						PrivateIP:   remoteGw2IP,
-						PublicIP:    "1.1.1.3",
+						PublicIP:    remoteGw2PublicIP,
 						UnderNAT:    false,
 					},
 				},
@@ -130,9 +137,9 @@ func TestLibreswan_Apply(t *testing.T) {
 				LocalEndpoint: &types.Endpoint{
 					GatewayName: "localGw",
 					NodeName:    "localGwNode",
-					Subnets:     []string{"10.244.0.0/24", "10.244.1.0/24"},
-					PrivateIP:   "192.168.0.1",
-					PublicIP:    "1.1.1.1",
+					Subnets:     localSubnet,
+					PrivateIP:   localGwIP,
+					PublicIP:    localGwPublicIP,
 					UnderNAT:    true,
 				},
 				RemoteEndpoints: map[types.GatewayName]*types.Endpoint{
@@ -141,7 +148,7 @@ func TestLibreswan_Apply(t *testing.T) {
 						NodeName:    "remoteNode1",
 						Subnets:     remoteGw1Subnets,
 						PrivateIP:   remoteGw1IP,
-						PublicIP:    "1.1.1.2",
+						PublicIP:    remoteGw1PublicIP,
 						UnderNAT:    true,
 					},
 					"remoteGw2": {
@@ -149,7 +156,7 @@ func TestLibreswan_Apply(t *testing.T) {
 						NodeName:    "remoteNode2",
 						Subnets:     remoteGw2Subnets,
 						PrivateIP:   remoteGw2IP,
-						PublicIP:    "1.1.1.3",
+						PublicIP:    remoteGw2PublicIP,
 						UnderNAT:    true,
 					},
 				},
@@ -159,15 +166,15 @@ func TestLibreswan_Apply(t *testing.T) {
 			nodeName: "localGwNode",
 			expectedConnName: map[string]struct{}{
 				// Direct connection to the central gateway
-				connectionName(localGwIP, remoteGw1IP, localSubnet[0], remoteGw1Subnets[0]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[0], remoteGw1Subnets[1]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[1], remoteGw1Subnets[0]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[1], remoteGw1Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[1]): {},
 				// Connection that forwards traffic of other NATed gateway
-				connectionName(localGwIP, remoteGw1IP, localSubnet[0], remoteGw2Subnets[0]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[1], remoteGw2Subnets[0]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[0], remoteGw2Subnets[1]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[1], remoteGw2Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw1IP, remoteGw1PublicIP, remoteGw2Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw1IP, remoteGw1PublicIP, remoteGw2Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw1IP, remoteGw1PublicIP, remoteGw2Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw1IP, remoteGw1PublicIP, remoteGw2Subnets[1]): {},
 			},
 			network: &types.Network{
 				LocalEndpoint: &types.Endpoint{
@@ -175,7 +182,7 @@ func TestLibreswan_Apply(t *testing.T) {
 					NodeName:    "localGwNode",
 					Subnets:     localSubnet,
 					PrivateIP:   localGwIP,
-					PublicIP:    "1.1.1.1",
+					PublicIP:    localGwPublicIP,
 					UnderNAT:    true,
 				},
 				RemoteEndpoints: map[types.GatewayName]*types.Endpoint{
@@ -184,7 +191,7 @@ func TestLibreswan_Apply(t *testing.T) {
 						NodeName:    "centralGwNode",
 						Subnets:     remoteGw1Subnets,
 						PrivateIP:   remoteGw1IP,
-						PublicIP:    "1.1.1.2",
+						PublicIP:    remoteGw1PublicIP,
 						UnderNAT:    false,
 					},
 					"remoteGw": {
@@ -192,7 +199,7 @@ func TestLibreswan_Apply(t *testing.T) {
 						NodeName:    "remoteNode",
 						Subnets:     remoteGw2Subnets,
 						PrivateIP:   remoteGw2IP,
-						PublicIP:    "1.1.1.3",
+						PublicIP:    remoteGw2PublicIP,
 						UnderNAT:    true,
 					},
 				},
@@ -203,15 +210,15 @@ func TestLibreswan_Apply(t *testing.T) {
 			nodeName: "localGwNode",
 			expectedConnName: map[string]struct{}{
 				// Direct connection to remoteGw1 (central gateway)
-				connectionName(localGwIP, remoteGw1IP, localSubnet[0], remoteGw1Subnets[0]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[0], remoteGw1Subnets[1]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[1], remoteGw1Subnets[0]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[1], remoteGw1Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[1]): {},
 				// Direct connection to remoteGw2
-				connectionName(localGwIP, remoteGw2IP, localSubnet[0], remoteGw2Subnets[0]): {},
-				connectionName(localGwIP, remoteGw2IP, localSubnet[1], remoteGw2Subnets[0]): {},
-				connectionName(localGwIP, remoteGw2IP, localSubnet[0], remoteGw2Subnets[1]): {},
-				connectionName(localGwIP, remoteGw2IP, localSubnet[1], remoteGw2Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[1]): {},
 				// No need to add subnets of the not NATed gateway into left subnets
 			},
 			network: &types.Network{
@@ -220,7 +227,7 @@ func TestLibreswan_Apply(t *testing.T) {
 					NodeName:    "localGwNode",
 					Subnets:     localSubnet,
 					PrivateIP:   localGwIP,
-					PublicIP:    "1.1.1.1",
+					PublicIP:    localGwPublicIP,
 					UnderNAT:    true,
 				},
 				RemoteEndpoints: map[types.GatewayName]*types.Endpoint{
@@ -229,7 +236,7 @@ func TestLibreswan_Apply(t *testing.T) {
 						NodeName:    "remoteGwNode1",
 						Subnets:     remoteGw1Subnets,
 						PrivateIP:   remoteGw1IP,
-						PublicIP:    "1.1.1.2",
+						PublicIP:    remoteGw1PublicIP,
 						UnderNAT:    false,
 					},
 					"remoteGw2": {
@@ -237,7 +244,7 @@ func TestLibreswan_Apply(t *testing.T) {
 						NodeName:    "remoteGwNode2",
 						Subnets:     remoteGw2Subnets,
 						PrivateIP:   remoteGw2IP,
-						PublicIP:    "1.1.1.3",
+						PublicIP:    remoteGw2PublicIP,
 						UnderNAT:    false,
 					},
 				},
@@ -250,26 +257,26 @@ func TestLibreswan_Apply(t *testing.T) {
 			name:     "central-gateway-connect-to-NATed-gateways",
 			nodeName: "centralGwNode",
 			expectedConnName: map[string]struct{}{
-				// Direct connection to remoteGw1
-				connectionName(localGwIP, remoteGw1IP, localSubnet[0], remoteGw1Subnets[0]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[0], remoteGw1Subnets[1]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[1], remoteGw1Subnets[0]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[1], remoteGw1Subnets[1]): {},
+				// Direct connection to remoteGw1 (central gateway)
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[1]): {},
 				// Direct connection to remoteGw2
-				connectionName(localGwIP, remoteGw2IP, localSubnet[0], remoteGw2Subnets[0]): {},
-				connectionName(localGwIP, remoteGw2IP, localSubnet[1], remoteGw2Subnets[0]): {},
-				connectionName(localGwIP, remoteGw2IP, localSubnet[0], remoteGw2Subnets[1]): {},
-				connectionName(localGwIP, remoteGw2IP, localSubnet[1], remoteGw2Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[1]): {},
 				// Connections that forward traffic between remoteGw1 and remoteGw2
-				connectionName(localGwIP, remoteGw1IP, remoteGw2Subnets[0], remoteGw1Subnets[0]): {},
-				connectionName(localGwIP, remoteGw1IP, remoteGw2Subnets[1], remoteGw1Subnets[0]): {},
-				connectionName(localGwIP, remoteGw1IP, remoteGw2Subnets[0], remoteGw1Subnets[1]): {},
-				connectionName(localGwIP, remoteGw1IP, remoteGw2Subnets[1], remoteGw1Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, remoteGw2Subnets[0], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, remoteGw2Subnets[1], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, remoteGw2Subnets[0], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, remoteGw2Subnets[1], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[1]): {},
 
-				connectionName(localGwIP, remoteGw2IP, remoteGw1Subnets[0], remoteGw2Subnets[0]): {},
-				connectionName(localGwIP, remoteGw2IP, remoteGw1Subnets[0], remoteGw2Subnets[1]): {},
-				connectionName(localGwIP, remoteGw2IP, remoteGw1Subnets[1], remoteGw2Subnets[0]): {},
-				connectionName(localGwIP, remoteGw2IP, remoteGw1Subnets[1], remoteGw2Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, remoteGw1Subnets[0], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, remoteGw1Subnets[0], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, remoteGw1Subnets[1], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, remoteGw1Subnets[1], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[1]): {},
 			},
 			network: &types.Network{
 				LocalEndpoint: &types.Endpoint{
@@ -277,7 +284,7 @@ func TestLibreswan_Apply(t *testing.T) {
 					NodeName:    "centralGwNode",
 					Subnets:     localSubnet,
 					PrivateIP:   localGwIP,
-					PublicIP:    "1.1.1.1",
+					PublicIP:    localGwPublicIP,
 					UnderNAT:    false,
 				},
 				RemoteEndpoints: map[types.GatewayName]*types.Endpoint{
@@ -286,7 +293,7 @@ func TestLibreswan_Apply(t *testing.T) {
 						NodeName:    "remoteGwNode1",
 						Subnets:     remoteGw1Subnets,
 						PrivateIP:   remoteGw1IP,
-						PublicIP:    "1.1.1.2",
+						PublicIP:    remoteGw1PublicIP,
 						UnderNAT:    true,
 					},
 					"remoteGw2": {
@@ -294,7 +301,7 @@ func TestLibreswan_Apply(t *testing.T) {
 						NodeName:    "remoteGwNode12",
 						Subnets:     remoteGw2Subnets,
 						PrivateIP:   remoteGw2IP,
-						PublicIP:    "1.1.1.3",
+						PublicIP:    remoteGw2PublicIP,
 						UnderNAT:    true,
 					},
 				},
@@ -306,16 +313,16 @@ func TestLibreswan_Apply(t *testing.T) {
 			name:     "central-gateway-connect-to-NATed-gateways-and-not-NATed-gateway",
 			nodeName: "centralGwNode",
 			expectedConnName: map[string]struct{}{
-				// Direct connection to remoteGw1
-				connectionName(localGwIP, remoteGw1IP, localSubnet[0], remoteGw1Subnets[0]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[0], remoteGw1Subnets[1]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[1], remoteGw1Subnets[0]): {},
-				connectionName(localGwIP, remoteGw1IP, localSubnet[1], remoteGw1Subnets[1]): {},
+				// Direct connection to remoteGw1 (central gateway)
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw1IP, remoteGw1PublicIP, remoteGw1Subnets[1]): {},
 				// Direct connection to remoteGw2
-				connectionName(localGwIP, remoteGw2IP, localSubnet[0], remoteGw2Subnets[0]): {},
-				connectionName(localGwIP, remoteGw2IP, localSubnet[1], remoteGw2Subnets[0]): {},
-				connectionName(localGwIP, remoteGw2IP, localSubnet[0], remoteGw2Subnets[1]): {},
-				connectionName(localGwIP, remoteGw2IP, localSubnet[1], remoteGw2Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[0]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[0], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[1]): {},
+				connectionName(localGwIP, localGwPublicIP, localSubnet[1], remoteGw2IP, remoteGw2PublicIP, remoteGw2Subnets[1]): {},
 			},
 			network: &types.Network{
 				LocalEndpoint: &types.Endpoint{
@@ -323,7 +330,7 @@ func TestLibreswan_Apply(t *testing.T) {
 					NodeName:    "centralGwNode",
 					Subnets:     localSubnet,
 					PrivateIP:   localGwIP,
-					PublicIP:    "1.1.1.1",
+					PublicIP:    localGwPublicIP,
 					UnderNAT:    false,
 				},
 				RemoteEndpoints: map[types.GatewayName]*types.Endpoint{
@@ -332,7 +339,7 @@ func TestLibreswan_Apply(t *testing.T) {
 						NodeName:    "remoteGwNode1",
 						Subnets:     remoteGw1Subnets,
 						PrivateIP:   remoteGw1IP,
-						PublicIP:    "1.1.1.2",
+						PublicIP:    remoteGw1PublicIP,
 						UnderNAT:    true,
 					},
 					"remoteGw2": {
@@ -340,7 +347,7 @@ func TestLibreswan_Apply(t *testing.T) {
 						NodeName:    "remoteGwNode12",
 						Subnets:     remoteGw2Subnets,
 						PrivateIP:   remoteGw2IP,
-						PublicIP:    "1.1.1.3",
+						PublicIP:    remoteGw2PublicIP,
 						UnderNAT:    false,
 					},
 				},
@@ -369,7 +376,7 @@ func TestLibreswan_Apply(t *testing.T) {
 			whackCmd = w.whackCmd
 			a := assert.New(t)
 			l := &libreswan{
-				connections: map[string]struct{}{},
+				connections: make(map[string]*vpndriver.Connection),
 				nodeName:    types.NodeName(v.nodeName),
 			}
 			a.NoError(l.Apply(v.network))

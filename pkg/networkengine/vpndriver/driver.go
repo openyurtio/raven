@@ -23,6 +23,18 @@ type Driver interface {
 	Cleanup() error
 }
 
+// Connection is the struct for VPN connection.
+type Connection struct {
+	UnderNAT       bool
+	LocalPrivateIP string
+	LocalPublicIP  string
+	LocalSubnet    string
+
+	RemotePrivateIP string
+	RemotePublicIP  string
+	RemoteSubnet    string
+}
+
 type Factory func(cfg *config.Config) (Driver, error)
 
 var (
