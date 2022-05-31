@@ -146,9 +146,9 @@ func (c *EngineController) sync() error {
 	for _, gw := range gws {
 		// try to update public IP if empty.
 		if ep := gw.Status.ActiveEndpoint; ep != nil && ep.PublicIP == "" {
-			err := c.completeGateway(gw)
+			err := c.configGatewayPublicIP(gw)
 			if err != nil {
-				klog.ErrorS(err, "error completing gateway", "gateway", klog.KObj(gw))
+				klog.ErrorS(err, "error config gateway public ip", "gateway", klog.KObj(gw))
 			}
 			continue
 		}
@@ -257,7 +257,7 @@ func (c *EngineController) shouldHandleGateway(gateway *v1alpha1.Gateway) bool {
 	return true
 }
 
-func (c *EngineController) completeGateway(gateway *v1alpha1.Gateway) error {
+func (c *EngineController) configGatewayPublicIP(gateway *v1alpha1.Gateway) error {
 	if gateway.Status.ActiveEndpoint.NodeName != c.nodeName {
 		return nil
 	}

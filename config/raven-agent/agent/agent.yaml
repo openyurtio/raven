@@ -28,8 +28,13 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-            - name: LIBRESWAN_PSK
+            - name: VPN_CONNECTION_PSK
               valueFrom:
                 secretKeyRef:
                   name: agent-secret
-                  key: libreswan-psk
+                  key: vpn-connection-psk
+            - name: VPN_DRIVER
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: vpn-driver

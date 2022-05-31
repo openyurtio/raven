@@ -26,6 +26,7 @@ import (
 	"github.com/openyurtio/raven/cmd/agent/app"
 	_ "github.com/openyurtio/raven/pkg/networkengine/routedriver/vxlan"
 	_ "github.com/openyurtio/raven/pkg/networkengine/vpndriver/libreswan"
+	_ "github.com/openyurtio/raven/pkg/networkengine/vpndriver/wireguard"
 )
 
 func main() {

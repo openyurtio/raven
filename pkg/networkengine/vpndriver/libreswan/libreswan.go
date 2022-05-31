@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"sort"
 	"syscall"
 	"time"
 
@@ -39,7 +38,7 @@ var _ vpndriver.Driver = (*libreswan)(nil)
 
 // can be modified for testing.
 var whackCmd = whackCmdFn
-var findCentralGw = findCentralGwFn
+var findCentralGw = vpndriver.FindCentralGwFn
 
 func init() {
 	vpndriver.RegisterDriver(DriverName, New)
@@ -47,11 +46,10 @@ func init() {
 
 const (
 	SecretFile string = "/etc/ipsec.d/raven.secrets"
-	DefaultPSK string = "openyurt-raven"
 )
 
 type libreswan struct {
-	connections map[string]struct{}
+	connections map[string]*vpndriver.Connection
 	nodeName    types.NodeName
 }
 
@@ -70,11 +68,7 @@ func (l *libreswan) Init() error {
 	}
 	defer file.Close()
 
-	psk := os.Getenv("LIBRESWAN_PSK")
-	if psk == "" {
-		psk = DefaultPSK
-		klog.Warning(fmt.Sprintf("use weak PSK: %s", psk))
-	}
+	psk := vpndriver.GetPSK()
 	fmt.Fprintf(file, "%%any %%any : PSK \"%s\"\n", psk)
 
 	return l.runPluto()
@@ -82,7 +76,7 @@ func (l *libreswan) Init() error {
 
 func New(cfg *config.Config) (vpndriver.Driver, error) {
 	return &libreswan{
-		connections: map[string]struct{}{},
+		connections: make(map[string]*vpndriver.Connection),
 		nodeName:    types.NodeName(cfg.NodeName),
 	}, nil
 }
@@ -101,19 +95,19 @@ func (l *libreswan) Apply(network *types.Network) (err error) {
 	centralGw := findCentralGw(network)
 	resolveEndpoint := l.getEndpointResolver(network)
 	// This is the desired connection calculated from given *types.Network
-	desiredConns := make(map[string]struct{})
+	desiredConns := make(map[string]*vpndriver.Connection)
 	defer func() {
 		if err == nil && len(desiredConns) == 0 {
 			klog.Infof("no desired connections, cleaning vpn connections")
 			err = l.Cleanup()
 		}
 	}()
+
 	for _, remoteGw := range network.RemoteEndpoints {
 		leftSubnets, connectTo := resolveEndpoint(centralGw, remoteGw)
 		for _, leftSubnet := range leftSubnets {
 			for _, rightSubnet := range remoteGw.Subnets {
-				err := l.connectToEndpoint(network.LocalEndpoint, connectTo, leftSubnet, rightSubnet, desiredConns)
-				errList = errList.Append(err)
+				l.computeDesiredConnections(network.LocalEndpoint, connectTo, leftSubnet, rightSubnet, desiredConns)
 			}
 		}
 	}
@@ -121,7 +115,7 @@ func (l *libreswan) Apply(network *types.Network) (err error) {
 	// remove unwanted connections
 	for connName := range l.connections {
 		if _, ok := desiredConns[connName]; !ok {
-			err := whackDelConnection(connName)
+			err := l.whackDelConnection(connName)
 			if err != nil {
 				errList = errList.Append(err)
 				klog.ErrorS(err, "error disconnecting endpoint", "connectionName", connName)
@@ -130,6 +124,13 @@ func (l *libreswan) Apply(network *types.Network) (err error) {
 			delete(l.connections, connName)
 		}
 	}
+
+	// add new connections
+	for name, connection := range desiredConns {
+		err := l.connectToEndpoint(name, connection)
+		errList = errList.Append(err)
+	}
+
 	return errList.AsError()
 }
 
@@ -176,31 +177,31 @@ func (l *libreswan) getEndpointResolver(network *types.Network) func(centralGw, 
 	}
 }
 
-func whackConnectToEndpoint(connectionName string, local, remote *types.Endpoint, leftSubnet, rightSubnet string) error {
+func (l *libreswan) whackConnectToEndpoint(connectionName string, connection *vpndriver.Connection) error {
 	args := make([]string, 0)
-	leftID := fmt.Sprintf("@%s-%s-%s", local.PrivateIP, leftSubnet, rightSubnet)
-	rightID := fmt.Sprintf("@%s-%s-%s", remote.PrivateIP, rightSubnet, leftSubnet)
+	leftID := fmt.Sprintf("@%s-%s-%s", connection.LocalEndpoint.PrivateIP, connection.LocalSubnet, connection.RemoteSubnet)
+	rightID := fmt.Sprintf("@%s-%s-%s", connection.RemoteEndpoint.PrivateIP, connection.RemoteSubnet, connection.LocalSubnet)
 	//TODO Configure "--forceencaps" only when necessary.
 	//  "--forceencaps" is not necessary for endpoints that are not behind NAT device.
 	args = append(args, "--psk", "--encrypt", "--forceencaps", "--name", connectionName,
 		// local
 		"--id", leftID,
-		"--host", local.String(),
-		"--client", leftSubnet,
+		"--host", connection.LocalEndpoint.String(),
+		"--client", connection.LocalSubnet,
 		"--ikeport", "4500",
 
 		"--to",
 
 		// remote
 		"--id", rightID,
-		"--host", remote.PublicIP,
-		"--client", rightSubnet,
+		"--host", connection.RemoteEndpoint.PublicIP,
+		"--client", connection.RemoteSubnet,
 		"--ikeport", "4500")
 
 	if err := whackCmd(args...); err != nil {
 		return err
 	}
-	if local.UnderNAT {
+	if connection.LocalEndpoint.UnderNAT {
 		if err := whackCmd("--route", "--name", connectionName); err != nil {
 			return err
 		}
@@ -209,6 +210,17 @@ func whackConnectToEndpoint(connectionName string, local, remote *types.Endpoint
 		}
 	}
 	return nil
+}
+
+func (l *libreswan) computeDesiredConnections(leftEndpoint, rightEndpoint *types.Endpoint,
+	leftSubnet, rightSubnet string, desiredConns map[string]*vpndriver.Connection) {
+	name := connectionName(leftEndpoint.PrivateIP, rightEndpoint.PrivateIP, leftSubnet, rightSubnet)
+	desiredConns[name] = &vpndriver.Connection{
+		LocalEndpoint:  leftEndpoint.Copy(),
+		RemoteEndpoint: rightEndpoint.Copy(),
+		LocalSubnet:    leftSubnet,
+		RemoteSubnet:   rightSubnet,
+	}
 }
 
 func whackCmdFn(args ...string) error {
@@ -229,7 +241,7 @@ func whackCmdFn(args ...string) error {
 	return nil
 }
 
-func whackDelConnection(conn string) error {
+func (l *libreswan) whackDelConnection(conn string) error {
 	return whackCmd("--delete", "--name", conn)
 }
 
@@ -240,12 +252,12 @@ func connectionName(localID, remoteID, leftSubnet, rightSubnet string) string {
 func (l *libreswan) Cleanup() error {
 	errList := errorlist.List{}
 	for name := range l.connections {
-		if err := whackDelConnection(name); err != nil {
+		if err := l.whackDelConnection(name); err != nil {
 			errList = errList.Append(err)
 			klog.ErrorS(err, "fail to delete connection", "connectionName", name)
 		}
 	}
-	l.connections = make(map[string]struct{})
+	l.connections = make(map[string]*vpndriver.Connection)
 	err := netlinkutil.XfrmPolicyFlush()
 	errList = errList.Append(err)
 	return errList.AsError()
@@ -285,48 +297,18 @@ func (l *libreswan) runPluto() error {
 	return nil
 }
 
-// findCentralGwFn tries to find a central gateway from the given network.
-// Returns nil if no central gateway found.
-// A central gateway is used to forward traffic between gateway under nat network,
-// in which the gateways can not establish ipsec connection directly.
-func findCentralGwFn(network *types.Network) *types.Endpoint {
-	candidates := make([]*types.Endpoint, 0)
-	candidates = append(candidates, network.LocalEndpoint)
-	for _, v := range network.RemoteEndpoints {
-		candidates = append(candidates, v)
-	}
-	// TODO: Maybe cause central ep switch when add or delete a candidate gateway because of sorting
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].NodeName < candidates[j].NodeName
-	})
-
-	var central *types.Endpoint
-	for i := range candidates {
-		if !candidates[i].UnderNAT {
-			central = candidates[i]
-		}
-	}
-	return central
-}
-
-func (l *libreswan) connectToEndpoint(leftEndpoint, rightEndpoint *types.Endpoint,
-	leftSubnet, rightSubnet string, desiredConns map[string]struct{}) errorlist.List {
+func (l *libreswan) connectToEndpoint(name string, connection *vpndriver.Connection) errorlist.List {
 	errList := errorlist.List{}
-	name := connectionName(leftEndpoint.PrivateIP, rightEndpoint.PrivateIP, leftSubnet, rightSubnet)
-	desiredConns[name] = struct{}{}
 	if _, ok := l.connections[name]; ok {
-		klog.InfoS("skipping connect because connection already exists", "connectionName", name,
-			"local_gateway", leftEndpoint.GatewayName, "remote_gateway", rightEndpoint.GatewayName)
+		klog.InfoS("skipping connect because connection already exists", "connectionName", name)
 		return errList
 	}
-
-	err := whackConnectToEndpoint(name, leftEndpoint, rightEndpoint, leftSubnet, rightSubnet)
+	err := l.whackConnectToEndpoint(name, connection)
 	if err != nil {
 		errList = errList.Append(err)
-		klog.InfoS("skipping connect because connection already exists", "connectionName", name,
-			"local_gateway", leftEndpoint.GatewayName, "remote_gateway", rightEndpoint.GatewayName)
+		klog.ErrorS(err, "error connect connection", "connectionName", name)
 		return errList
 	}
-	l.connections[name] = struct{}{}
+	l.connections[name] = connection
 	return errList
 }
