@@ -59,11 +59,14 @@ func (l *libreswan) Init() error {
 	// Ensure secrets file
 	_, err := os.Stat(SecretFile)
 	if err == nil {
-		os.Remove(SecretFile)
+		if err := os.Remove(SecretFile); err != nil {
+			return err
+		}
 	}
 	file, err := os.Create(SecretFile)
 	if err != nil {
 		klog.Errorf("fail to create secrets file: %v", err)
+		return err
 	}
 	defer file.Close()
 
