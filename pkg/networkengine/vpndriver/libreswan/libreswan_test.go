@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
+	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
 	"github.com/openyurtio/raven/pkg/types"
 )
 
@@ -369,7 +370,7 @@ func TestLibreswan_Apply(t *testing.T) {
 			whackCmd = w.whackCmd
 			a := assert.New(t)
 			l := &libreswan{
-				connections: map[string]struct{}{},
+				connections: make(map[string]*vpndriver.Connection),
 				nodeName:    types.NodeName(v.nodeName),
 			}
 			a.NoError(l.Apply(v.network))

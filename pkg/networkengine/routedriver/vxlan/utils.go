@@ -22,9 +22,7 @@ package vxlan
 import (
 	"fmt"
 	"net"
-	"syscall"
 
-	"github.com/vdobler/ht/errorlist"
 	"github.com/vishvananda/netlink"
 	"k8s.io/klog/v2"
 
@@ -96,129 +94,6 @@ func isVxlanConfigChanged(newLink, currentLink netlink.Link) bool {
 		return true
 	}
 	return false
-}
-
-func listRulesOnNode() (map[string]*netlink.Rule, error) {
-	rulesOnNode := make(map[string]*netlink.Rule)
-
-	rules, err := netlinkutil.RuleListFiltered(netlink.FAMILY_V4,
-		&netlink.Rule{Table: routeTableID},
-		netlink.RT_FILTER_TABLE)
-	if err != nil {
-		return nil, err
-	}
-
-	for k, v := range rules {
-		rulesOnNode[ruleKey(&v)] = &rules[k]
-	}
-
-	return rulesOnNode, nil
-}
-
-func listRoutesOnNode() (map[string]*netlink.Route, error) {
-	routes, err := netlinkutil.RouteListFiltered(
-		netlink.FAMILY_V4,
-		&netlink.Route{Table: routeTableID},
-		netlink.RT_FILTER_TABLE)
-	if err != nil {
-		return nil, err
-	}
-	ro := make(map[string]*netlink.Route)
-	for k, v := range routes {
-		ro[routeKey(&v)] = &routes[k]
-	}
-	return ro, nil
-}
-
-func listFDBsOnNode(link netlink.Link) (map[string]*netlink.Neigh, error) {
-	fdbsOnNode := make(map[string]*netlink.Neigh)
-	neighs, err := netlinkutil.NeighList(link.Attrs().Index, syscall.AF_BRIDGE)
-	if err != nil {
-		return nil, err
-	}
-	for k, v := range neighs {
-		if v.HardwareAddr.String() == allZeroMAC.String() {
-			fdbsOnNode[v.IP.String()] = &neighs[k]
-		}
-	}
-	return fdbsOnNode, nil
-}
-
-func applyRules(current, desired map[string]*netlink.Rule) (err error) {
-	if klog.V(5).Enabled() {
-		klog.InfoS("applying rules", "current", current, "desired", desired)
-	}
-	errList := errorlist.List{}
-	for k, v := range desired {
-		_, ok := current[k]
-		if !ok {
-			klog.InfoS("adding rule", "src", v.Src, "lookup", v.Table)
-			err = netlinkutil.RuleAdd(v)
-			errList = errList.Append(err)
-			continue
-		}
-		delete(current, k)
-	}
-	// remove unwanted rules
-	for _, v := range current {
-		klog.InfoS("deleting rule", "src", v.Src, "lookup", v.Table)
-		err = netlinkutil.RuleDel(v)
-		errList = errList.Append(err)
-	}
-	return errList.AsError()
-}
-
-func applyRoutes(current, desired map[string]*netlink.Route) (err error) {
-	if klog.V(5).Enabled() {
-		klog.InfoS("applying routes", "current", current, "desired", desired)
-	}
-	errList := errorlist.List{}
-	for k, v := range desired {
-		ro, ok := current[k]
-		if !ok {
-			klog.InfoS("adding route", "dst", v.Dst, "via", v.Gw, "src", v.Src, "table", v.Table)
-			err = netlinkutil.RouteAdd(v)
-			errList = errList.Append(err)
-			continue
-		}
-		delete(current, k)
-		if !routeEqual(*ro, *v) {
-			klog.InfoS("replacing route", "dst", v.Dst, "via", v.Gw, "src", v.Src, "table", v.Table)
-			err = netlinkutil.RouteReplace(v)
-			errList = errList.Append(err)
-		}
-	}
-	// remove unwanted routes
-	for _, v := range current {
-		klog.InfoS("deleting route", "dst", v.Dst.String(), "via", v.Gw.String())
-		err = netlinkutil.RouteDel(v)
-		errList = errList.Append(err)
-	}
-	return errList.AsError()
-}
-
-func applyFDBs(current, desired map[string]*netlink.Neigh) (err error) {
-	if klog.V(5).Enabled() {
-		klog.InfoS("applying FDBs", "current", current, "desired", desired)
-	}
-	errList := errorlist.List{}
-	for k, v := range desired {
-		_, ok := current[k]
-		if !ok {
-			klog.InfoS("adding FDB", "dst", v.IP, "mac", v.HardwareAddr)
-			err = netlinkutil.NeighAppend(v)
-			errList = errList.Append(err)
-			continue
-		}
-		delete(current, k)
-	}
-	// remove unwanted fdb entries
-	for _, v := range current {
-		klog.InfoS("deleting FDB", "dst", v.IP, "mac", v.HardwareAddr)
-		err = netlinkutil.NeighDel(v)
-		errList = errList.Append(err)
-	}
-	return errList.AsError()
 }
 
 func defaultLinkTo(ip net.IP) (netlink.Link, error) {

@@ -30,6 +30,7 @@ import (
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/pkg/networkengine/routedriver"
+	networkutil "github.com/openyurtio/raven/pkg/networkengine/util"
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
 	"github.com/openyurtio/raven/pkg/types"
 )
@@ -46,8 +47,6 @@ const (
 
 	DriverName = "vxlan"
 )
-
-var allZeroMAC = net.HardwareAddr{0, 0, 0, 0, 0, 0}
 
 func init() {
 	routedriver.RegisterRouteDriver(DriverName, New)
@@ -85,16 +84,16 @@ func (vx *vxlan) Apply(network *types.Network) (err error) {
 		return fmt.Errorf("error ensuring vxlan: %s", err)
 	}
 
-	currentRoutes, err = listRoutesOnNode()
+	currentRoutes, err = networkutil.ListRoutesOnNode(routeTableID)
 	if err != nil {
 		return fmt.Errorf("error listing routes on node: %s", err)
 	}
-	currentRules, err = listRulesOnNode()
+	currentRules, err = networkutil.ListRulesOnNode(routeTableID)
 	if err != nil {
 		return fmt.Errorf("error listing rules on node: %s", err)
 	}
 
-	currentFDBs, err = listFDBsOnNode(vx.vxlanIface)
+	currentFDBs, err = networkutil.ListFDBsOnNode(vx.vxlanIface)
 	if err != nil {
 		return fmt.Errorf("error listing fdb on node: %s", err)
 	}
@@ -108,15 +107,15 @@ func (vx *vxlan) Apply(network *types.Network) (err error) {
 		desiredFDBs = vx.calFDBOnNonGateway(network)
 	}
 
-	err = applyRoutes(currentRoutes, desiredRoutes)
+	err = networkutil.ApplyRoutes(currentRoutes, desiredRoutes)
 	if err != nil {
 		return fmt.Errorf("error applying routes: %s", err)
 	}
-	err = applyRules(currentRules, desiredRules)
+	err = networkutil.ApplyRules(currentRules, desiredRules)
 	if err != nil {
 		return fmt.Errorf("error applying rules: %s", err)
 	}
-	err = applyFDBs(currentFDBs, desiredFDBs)
+	err = networkutil.ApplyFDBs(currentFDBs, desiredFDBs)
 	if err != nil {
 		return fmt.Errorf("error applying fdb: %s", err)
 	}
@@ -208,14 +207,6 @@ func setSysctl(path string, contents []byte) error {
 	return ioutil.WriteFile(path, contents, 0o644)
 }
 
-func newRavenRule() *netlink.Rule {
-	rule := netlink.NewRule()
-	rule.Priority = rulePriority
-	rule.Table = routeTableID
-	rule.Family = netlink.FAMILY_V4
-	return rule
-}
-
 // calRouteOnNonGateway calculates and returns the desired routes on non-gateway node.
 // Routes on non-gateway node will use a separate route table(raven route table),
 // and configure the local gateway node as the next hop for packets sending to remote gateway nodes.
@@ -236,7 +227,7 @@ func (vx *vxlan) calRouteOnNonGateway(network *types.Network) map[string]*netlin
 		for _, dstCIDR := range v.Subnets {
 			_, ipnet, err := net.ParseCIDR(dstCIDR)
 			if err != nil {
-				klog.ErrorS(err, "error parsing cidr", "cidr", srcCIDR)
+				klog.ErrorS(err, "error parsing cidr", "cidr", dstCIDR)
 				continue
 			}
 			nr := &netlink.Route{
@@ -250,7 +241,7 @@ func (vx *vxlan) calRouteOnNonGateway(network *types.Network) map[string]*netlin
 				// TODO should minus vpn mtu OverHead
 				MTU: vx.vxlanIface.Attrs().MTU,
 			}
-			routes[routeKey(nr)] = nr
+			routes[networkutil.RouteKey(nr)] = nr
 		}
 	}
 	return routes
@@ -262,8 +253,8 @@ func (vx *vxlan) calRouteOnNonGateway(network *types.Network) map[string]*netlin
 //   ip rule add from all lookup {routeTableID} prio {rulePriority}
 func (vx *vxlan) calRulesOnNonGateway() map[string]*netlink.Rule {
 	rules := make(map[string]*netlink.Rule)
-	rule := newRavenRule()
-	rules[ruleKey(rule)] = rule
+	rule := networkutil.NewRavenRule(rulePriority, routeTableID)
+	rules[networkutil.RuleKey(rule)] = rule
 	return rules
 }
 
@@ -293,7 +284,7 @@ func (vx *vxlan) calRouteOnGateway(network *types.Network) map[string]*netlink.R
 			Flags:     int(netlink.FLAG_ONLINK),
 			MTU:       vx.vxlanIface.Attrs().MTU,
 		}
-		routes[routeKey(nr)] = nr
+		routes[networkutil.RouteKey(nr)] = nr
 	}
 	return routes
 }
@@ -317,24 +308,11 @@ func (vx *vxlan) calRulesOnGateway(network *types.Network) map[string]*netlink.R
 			klog.ErrorS(err, "error parsing cidr", "cidr", srcCIDR)
 			continue
 		}
-		rule := newRavenRule()
+		rule := networkutil.NewRavenRule(rulePriority, routeTableID)
 		rule.Src = srcCIDR
-		rules[ruleKey(rule)] = rule
+		rules[networkutil.RuleKey(rule)] = rule
 	}
 	return rules
-}
-
-func routeKey(route *netlink.Route) string {
-	return fmt.Sprintf("%s-%d", route.Dst, route.Table)
-}
-
-func ruleKey(rule *netlink.Rule) string {
-	src := "0.0.0.0/0"
-	srcIPNet := rule.Src
-	if srcIPNet != nil {
-		src = srcIPNet.String()
-	}
-	return src
 }
 
 // calFDBOnGateway calculates and returns the desired FDB entries on gateway node.
@@ -353,7 +331,7 @@ func (vx *vxlan) calFDBOnGateway(network *types.Network) map[string]*netlink.Nei
 			Family:       syscall.AF_BRIDGE,
 			Flags:        netlink.NTF_SELF,
 			IP:           net.ParseIP(v.PrivateIP),
-			HardwareAddr: allZeroMAC,
+			HardwareAddr: networkutil.AllZeroMAC,
 		}
 	}
 	return fdbs
@@ -371,33 +349,19 @@ func (vx *vxlan) calFDBOnNonGateway(network *types.Network) map[string]*netlink.
 			Family:       syscall.AF_BRIDGE,
 			Flags:        netlink.NTF_SELF,
 			IP:           net.ParseIP(network.LocalEndpoint.PrivateIP),
-			HardwareAddr: allZeroMAC,
+			HardwareAddr: networkutil.AllZeroMAC,
 		},
 	}
 }
 
 func (vx *vxlan) Cleanup() error {
 	errList := errorlist.List{}
-	rules, err := listRulesOnNode()
-	if err != nil {
-		errList = errList.Append(fmt.Errorf("error listing rules: %s", err))
-	}
-	for _, v := range rules {
-		err = netlinkutil.RuleDel(v)
-		if err != nil {
-			errList = errList.Append(fmt.Errorf("error deleting rules: %s", err))
-		}
+	if err := networkutil.CleanRulesOnNode(routeTableID); err != nil {
+		errList = errList.Append(err)
 	}
 
-	routes, err := listRoutesOnNode()
-	if err != nil {
-		errList = errList.Append(fmt.Errorf("error listing routes: %s", err))
-	}
-	for _, v := range routes {
-		err = netlinkutil.RouteDel(v)
-		if err != nil {
-			errList = errList.Append(fmt.Errorf("error deleting routes: %s", err))
-		}
+	if err := networkutil.CleanRoutesOnNode(routeTableID); err != nil {
+		errList = errList.Append(err)
 	}
 
 	l, err := netlinkutil.LinkByName(vxlanLinkName)
@@ -413,15 +377,6 @@ func (vx *vxlan) Cleanup() error {
 		errList = errList.Append(fmt.Errorf("error deleting vxlan link: %s", err))
 	}
 	return errList.AsError()
-}
-
-func routeEqual(x, y netlink.Route) bool {
-	if x.Dst.IP.Equal(y.Dst.IP) && x.Gw.Equal(y.Gw) &&
-		bytes.Equal(x.Dst.Mask, y.Dst.Mask) &&
-		x.LinkIndex == y.LinkIndex {
-		return true
-	}
-	return false
 }
 
 func vxlanIP(privateIP net.IP) net.IP {

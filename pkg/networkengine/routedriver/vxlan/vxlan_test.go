@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/vishvananda/netlink"
 
+	networkutil "github.com/openyurtio/raven/pkg/networkengine/util"
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
 )
 
@@ -168,20 +169,20 @@ func Test_applyRoutes(t *testing.T) {
 				actual[k] = v.current[k]
 			}
 			netlinkutil.RouteAdd = func(route *netlink.Route) (err error) {
-				actual[routeKey(route)] = route
+				actual[networkutil.RouteKey(route)] = route
 				return nil
 			}
 			netlinkutil.RouteReplace = func(route *netlink.Route) error {
-				actual[routeKey(route)] = route
+				actual[networkutil.RouteKey(route)] = route
 				return nil
 			}
 			netlinkutil.RouteDel = func(route *netlink.Route) (err error) {
-				delete(actual, routeKey(route))
+				delete(actual, networkutil.RouteKey(route))
 				return nil
 			}
 			a := assert.New(t)
 
-			err := applyRoutes(v.current, v.desired)
+			err := networkutil.ApplyRoutes(v.current, v.desired)
 			a.NoError(err)
 			if len(v.expected) == 0 {
 				a.Len(actual, 0)
@@ -299,16 +300,16 @@ func Test_applyRule(t *testing.T) {
 				actual[k] = v.current[k]
 			}
 			netlinkutil.RuleAdd = func(route *netlink.Rule) (err error) {
-				actual[ruleKey(route)] = route
+				actual[networkutil.RuleKey(route)] = route
 				return nil
 			}
 			netlinkutil.RuleDel = func(route *netlink.Rule) error {
-				delete(actual, ruleKey(route))
+				delete(actual, networkutil.RuleKey(route))
 				return nil
 			}
 			a := assert.New(t)
 
-			err := applyRules(v.current, v.desired)
+			err := networkutil.ApplyRules(v.current, v.desired)
 			a.NoError(err)
 			if len(v.expected) == 0 {
 				a.Len(actual, 0)

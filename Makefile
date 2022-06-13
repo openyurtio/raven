@@ -1,6 +1,7 @@
 
 # Image URL to use all building/pushing image targets
 IMG ?= openyurt/raven-agent:latest
+VPN_DRIVER ?= libreswan
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -58,7 +59,7 @@ docker-push: ## Push docker image with the agent.
 ##@ Deploy
 
 gen-deploy-yaml:
-	bash hack/gen-yaml.sh ${IMG}
+	bash hack/gen-yaml.sh ${IMG} ${VPN_DRIVER}
 
 deploy: gen-deploy-yaml ## Deploy agent daemon.
 	kubectl apply -f _output/yamls/raven-agent.yaml
