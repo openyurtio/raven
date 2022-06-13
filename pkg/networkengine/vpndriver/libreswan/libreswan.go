@@ -32,7 +32,12 @@ import (
 	"github.com/openyurtio/raven/pkg/types"
 )
 
-const DriverName = "libreswan"
+const (
+	IPSecEncapLen = 64
+
+	// DriverName specifies name of libreswan VPN backend driver.
+	DriverName = "libreswan"
+)
 
 var _ vpndriver.Driver = (*libreswan)(nil)
 
@@ -81,7 +86,7 @@ func New(cfg *config.Config) (vpndriver.Driver, error) {
 	}, nil
 }
 
-func (l *libreswan) Apply(network *types.Network) (err error) {
+func (l *libreswan) Apply(network *types.Network, routeDriverMTUFn func(*types.Network) (int, error)) (err error) {
 	errList := errorlist.List{}
 	if network.LocalEndpoint == nil || len(network.RemoteEndpoints) == 0 {
 		klog.Info("no local gateway or remote gateway is found, cleaning vpn connections")
@@ -92,29 +97,15 @@ func (l *libreswan) Apply(network *types.Network) (err error) {
 		return l.Cleanup()
 	}
 
-	centralGw := findCentralGw(network)
-	resolveEndpoint := l.getEndpointResolver(network)
-	// This is the desired connection calculated from given *types.Network
-	desiredConns := make(map[string]*vpndriver.Connection)
-	defer func() {
-		if err == nil && len(desiredConns) == 0 {
-			klog.Infof("no desired connections, cleaning vpn connections")
-			err = l.Cleanup()
-		}
-	}()
-
-	for _, remoteGw := range network.RemoteEndpoints {
-		leftSubnets, connectTo := resolveEndpoint(centralGw, remoteGw)
-		for _, leftSubnet := range leftSubnets {
-			for _, rightSubnet := range remoteGw.Subnets {
-				l.computeDesiredConnections(network.LocalEndpoint, connectTo, leftSubnet, rightSubnet, desiredConns)
-			}
-		}
+	desiredConnections := l.computeDesiredConnections(network)
+	if len(desiredConnections) == 0 {
+		klog.Infof("no desired connections, cleaning vpn connections")
+		return l.Cleanup()
 	}
 
 	// remove unwanted connections
 	for connName := range l.connections {
-		if _, ok := desiredConns[connName]; !ok {
+		if _, ok := desiredConnections[connName]; !ok {
 			err := l.whackDelConnection(connName)
 			if err != nil {
 				errList = errList.Append(err)
@@ -126,12 +117,20 @@ func (l *libreswan) Apply(network *types.Network) (err error) {
 	}
 
 	// add new connections
-	for name, connection := range desiredConns {
+	for name, connection := range desiredConnections {
 		err := l.connectToEndpoint(name, connection)
 		errList = errList.Append(err)
 	}
 
 	return errList.AsError()
+}
+
+func (l *libreswan) MTU() (int, error) {
+	mtu, err := vpndriver.DefaultMTU()
+	if err != nil {
+		return 0, err
+	}
+	return mtu - IPSecEncapLen, nil
 }
 
 // getEndpointResolver returns a function that resolve the left subnets and the Endpoint that should connect to.
@@ -212,15 +211,28 @@ func (l *libreswan) whackConnectToEndpoint(connectionName string, connection *vp
 	return nil
 }
 
-func (l *libreswan) computeDesiredConnections(leftEndpoint, rightEndpoint *types.Endpoint,
-	leftSubnet, rightSubnet string, desiredConns map[string]*vpndriver.Connection) {
-	name := connectionName(leftEndpoint.PrivateIP, rightEndpoint.PrivateIP, leftSubnet, rightSubnet)
-	desiredConns[name] = &vpndriver.Connection{
-		LocalEndpoint:  leftEndpoint.Copy(),
-		RemoteEndpoint: rightEndpoint.Copy(),
-		LocalSubnet:    leftSubnet,
-		RemoteSubnet:   rightSubnet,
+func (l *libreswan) computeDesiredConnections(network *types.Network) map[string]*vpndriver.Connection {
+	centralGw := findCentralGw(network)
+	resolveEndpoint := l.getEndpointResolver(network)
+	// This is the desired connection calculated from given *types.Network
+	desiredConns := make(map[string]*vpndriver.Connection)
+
+	leftEndpoint := network.LocalEndpoint
+	for _, remoteGw := range network.RemoteEndpoints {
+		leftSubnets, connectTo := resolveEndpoint(centralGw, remoteGw)
+		for _, leftSubnet := range leftSubnets {
+			for _, rightSubnet := range remoteGw.Subnets {
+				name := connectionName(leftEndpoint.PrivateIP, connectTo.PrivateIP, leftSubnet, rightSubnet)
+				desiredConns[name] = &vpndriver.Connection{
+					LocalEndpoint:  leftEndpoint.Copy(),
+					RemoteEndpoint: connectTo.Copy(),
+					LocalSubnet:    leftSubnet,
+					RemoteSubnet:   rightSubnet,
+				}
+			}
+		}
 	}
+	return desiredConns
 }
 
 func whackCmdFn(args ...string) error {

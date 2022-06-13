@@ -44,6 +44,7 @@ import (
 const (
 	wgRouteTableID = 9028
 	wgRulePriority = 101
+	wgEncapLen     = 80
 	wgLinkType     = "wireguard"
 
 	// DriverName specifies name of WireGuard VPN backend driver.
@@ -117,39 +118,60 @@ func (w *wireguard) Init() error {
 	return nil
 }
 
-func (w *wireguard) isWgDeviceChanged() bool {
+func (w *wireguard) isWgDeviceChanged(existing, desired netlink.Link) bool {
 	if d, err := w.wgClient.Device(DeviceName); err == nil {
 		if d.ListenPort == ListenPort && reflect.DeepEqual(d.PrivateKey, w.privateKey) {
 			return false
 		}
 	}
+	if existing.Attrs().MTU == desired.Attrs().MTU {
+		return false
+	}
 	return true
 }
 
 // ensureWgLink creates new wg link if not exists.
-func (w *wireguard) ensureWgLink() error {
-	// delete existing wg device if needed
-	wgLink, err := netlink.LinkByName(DeviceName)
+func (w *wireguard) ensureWgLink(network *types.Network, routeDriverMTUFn func(*types.Network) (int, error)) error {
+	var err error
+	var vpnRouteMTU, routeDriverMTU int
+	vpnRouteMTU, err = w.MTU()
+	if err != nil {
+		return err
+	}
+	routeDriverMTU, err = routeDriverMTUFn(network)
+	if err != nil {
+		return err
+	}
+
+	// Config wg link
+	la := netlink.NewLinkAttrs()
+	la.Name = DeviceName
+	if vpnRouteMTU > routeDriverMTU {
+		la.MTU = routeDriverMTU
+	} else {
+		la.MTU = vpnRouteMTU
+	}
+	wgLink := &netlink.GenericLink{
+		LinkAttrs: la,
+		LinkType:  wgLinkType,
+	}
+
+	// Delete existing wg link if needed
+	wgLinkExist, err := netlink.LinkByName(DeviceName)
 	if err == nil {
 		// delete existing device if not wireguard type.
-		if w.isWgDeviceChanged() {
-			klog.InfoS("wireguard device changed", "link", wgLink)
-			if err := netlink.LinkDel(wgLink); err != nil {
+		if w.isWgDeviceChanged(wgLink, wgLinkExist) {
+			klog.InfoS("wireguard device changed", "link", wgLinkExist)
+			if err := netlink.LinkDel(wgLinkExist); err != nil {
 				return fmt.Errorf("error delete existing link: %v", err)
 			}
 		} else {
-			w.wgLink = wgLink
+			w.wgLink = wgLinkExist
 			return nil
 		}
 	}
 
-	// Create the wg device (ip link add dev $DeviceName type wireguard).
-	la := netlink.NewLinkAttrs()
-	la.Name = DeviceName
-	wgLink = &netlink.GenericLink{
-		LinkAttrs: la,
-		LinkType:  wgLinkType,
-	}
+	// Create the wg link (ip link add dev $DeviceName type wireguard).
 	if err := netlink.LinkAdd(wgLink); err != nil {
 		return fmt.Errorf("failed to add WireGuard device: %v", err)
 	}
@@ -176,7 +198,7 @@ func (w *wireguard) ensureWgLink() error {
 	return nil
 }
 
-func (w *wireguard) Apply(network *types.Network) error {
+func (w *wireguard) Apply(network *types.Network, routeDriverMTUFn func(*types.Network) (int, error)) error {
 	if network.LocalEndpoint == nil || len(network.RemoteEndpoints) == 0 {
 		klog.Info("no local gateway or remote gateway is found, cleaning vpn connections")
 		return w.Cleanup()
@@ -193,12 +215,20 @@ func (w *wireguard) Apply(network *types.Network) error {
 		}
 		return errors.New("retry to config public key")
 	}
-	// 1. Ensure  WireGuard link
-	if err := w.ensureWgLink(); err != nil {
+	// 1. Compute desiredConnections
+	centralGw := findCentralGw(network)
+	desiredConnections, centralAllowedIPs := w.computeDesiredConnections(network)
+	if len(desiredConnections) == 0 {
+		klog.Infof("no desired connections, cleaning vpn connections")
+		return w.Cleanup()
+	}
+
+	// 2. Ensure  WireGuard link
+	if err := w.ensureWgLink(network, routeDriverMTUFn); err != nil {
 		return fmt.Errorf("fail to ensure wireguar link: %v", err)
 	}
 
-	// 2. Config device route and rules
+	// 3. Config device route and rules
 	currentRoutes, err := networkutil.ListRoutesOnNode(wgRouteTableID)
 	if err != nil {
 		return fmt.Errorf("error listing wireguard routes on node: %s", err)
@@ -220,30 +250,9 @@ func (w *wireguard) Apply(network *types.Network) error {
 		return fmt.Errorf("error applying wireguard rules: %s", err)
 	}
 
-	// 3. Config WireGuard device
-	centralGw := findCentralGw(network)
-
-	// This is the desired connection calculated from given *types.Network
-	desiredConns := make(map[string]*vpndriver.Connection)
-	centralAllowedIPs := make([]string, 0)
-	for _, remote := range network.RemoteEndpoints {
-		if _, ok := remote.Config[PublicKey]; !ok {
-			continue
-		}
-
-		// if local gateway is not central gateway and remote endpoint is NATed
-		// append all subnets of remote gateway into central allowed IPs.
-		if network.LocalEndpoint.UnderNAT && remote.UnderNAT {
-			centralAllowedIPs = append(centralAllowedIPs, remote.Subnets...)
-			continue
-		}
-
-		w.computeDesiredConnections(network.LocalEndpoint, remote, desiredConns)
-	}
-
-	// delete unwanted connections
+	// 4. delete unwanted connections
 	for connName, connection := range w.connections {
-		if _, ok := desiredConns[connName]; !ok {
+		if _, ok := desiredConnections[connName]; !ok {
 			remoteKey := keyFromEndpoint(connection.RemoteEndpoint)
 			if err := w.removePeer(remoteKey); err == nil {
 				delete(w.connections, connName)
@@ -251,9 +260,9 @@ func (w *wireguard) Apply(network *types.Network) error {
 		}
 	}
 
-	// add or update connections
+	// 5. add or update connections
 	peerConfigs := make([]wgtypes.PeerConfig, 0)
-	for name, newConn := range desiredConns {
+	for name, newConn := range desiredConnections {
 		newKey := keyFromEndpoint(newConn.RemoteEndpoint)
 
 		if oldConn, ok := w.connections[name]; ok {
@@ -264,6 +273,8 @@ func (w *wireguard) Apply(network *types.Network) error {
 				}
 			}
 		}
+
+		klog.InfoS("create connection", "c", newConn)
 
 		allowedIPs := parseSubnets(newConn.RemoteEndpoint.Subnets)
 		if newConn.RemoteEndpoint.NodeName == centralGw.NodeName {
@@ -294,9 +305,17 @@ func (w *wireguard) Apply(network *types.Network) error {
 		return fmt.Errorf("error add peers: %v", err)
 	}
 
-	w.connections = desiredConns
+	w.connections = desiredConnections
 
 	return nil
+}
+
+func (w *wireguard) MTU() (int, error) {
+	mtu, err := vpndriver.DefaultMTU()
+	if err != nil {
+		return 0, err
+	}
+	return mtu - wgEncapLen, nil
 }
 
 func (w *wireguard) Cleanup() error {
@@ -325,12 +344,30 @@ func (w *wireguard) Cleanup() error {
 	return errList.AsError()
 }
 
-func (w *wireguard) computeDesiredConnections(leftEndpoint, rightEndpoint *types.Endpoint, desiredConns map[string]*vpndriver.Connection) {
-	name := connectionName(string(leftEndpoint.NodeName), string(rightEndpoint.NodeName))
-	desiredConns[name] = &vpndriver.Connection{
-		LocalEndpoint:  leftEndpoint.Copy(),
-		RemoteEndpoint: rightEndpoint.Copy(),
+func (w *wireguard) computeDesiredConnections(network *types.Network) (map[string]*vpndriver.Connection, []string) {
+
+	// This is the desired connection calculated from given *types.Network
+	desiredConns := make(map[string]*vpndriver.Connection)
+	centralAllowedIPs := make([]string, 0)
+	for _, remote := range network.RemoteEndpoints {
+		if _, ok := remote.Config[PublicKey]; !ok {
+			continue
+		}
+
+		// if local gateway is not central gateway and remote endpoint is NATed
+		// append all subnets of remote gateway into central allowed IPs.
+		if network.LocalEndpoint.UnderNAT && remote.UnderNAT {
+			centralAllowedIPs = append(centralAllowedIPs, remote.Subnets...)
+			continue
+		}
+
+		name := connectionName(string(network.LocalEndpoint.NodeName), string(remote.NodeName))
+		desiredConns[name] = &vpndriver.Connection{
+			LocalEndpoint:  network.LocalEndpoint.Copy(),
+			RemoteEndpoint: remote.Copy(),
+		}
 	}
+	return desiredConns, centralAllowedIPs
 }
 
 func (w *wireguard) removePeer(key *wgtypes.Key) error {
@@ -389,8 +426,7 @@ func (w *wireguard) calWgRules() map[string]*netlink.Rule {
 }
 
 // calWgRoutes calculates and returns the desired WireGuard routes on gateway node.
-// Routes on non-gateway node will use a separate route table(raven route table),
-// and configure the local gateway node as the next hop for packets sending to remote gateway nodes.
+// Routes on gateway node will use a separate route table(wg route table),
 // The routes entries format are equivalent to the following `ip route` command:
 //   ip route add {remote_subnet} dev raven-wg0 table {wgRouteTableID}
 func (w *wireguard) calWgRoutes(network *types.Network) map[string]*netlink.Route {
@@ -407,6 +443,7 @@ func (w *wireguard) calWgRoutes(network *types.Network) map[string]*netlink.Rout
 				Scope:     netlink.SCOPE_LINK,
 				Dst:       ipnet,
 				Table:     wgRouteTableID,
+				MTU:       w.wgLink.Attrs().MTU,
 			}
 			routes[networkutil.RouteKey(nr)] = nr
 		}

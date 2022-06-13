@@ -373,7 +373,7 @@ func TestLibreswan_Apply(t *testing.T) {
 				connections: make(map[string]*vpndriver.Connection),
 				nodeName:    types.NodeName(v.nodeName),
 			}
-			a.NoError(l.Apply(v.network))
+			a.NoError(l.Apply(v.network, nil)) // libreswan will not use route driver mtu fn
 			connName := make(map[string]struct{})
 			for name := range w.connections {
 				connName[name] = struct{}{}

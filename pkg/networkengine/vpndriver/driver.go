@@ -6,9 +6,11 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/vishvananda/netlink"
 	"k8s.io/klog/v2"
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
+	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
 	"github.com/openyurtio/raven/pkg/types"
 )
 
@@ -25,7 +27,9 @@ type Driver interface {
 	// Usually, the implementation should compare the current network state with the given desired state,
 	// and make changes to reach the desired state.
 	// This method should be idempotent.
-	Apply(network *types.Network) error
+	Apply(network *types.Network, routeDriverMTU func(*types.Network) (int, error)) error
+	// MTU return Minimal MTU in vpn driver
+	MTU() (int, error)
 	// Cleanup performs the necessary uninstallation.
 	Cleanup() error
 }
@@ -87,6 +91,28 @@ func FindCentralGwFn(network *types.Network) *types.Endpoint {
 		}
 	}
 	return central
+}
+
+func DefaultMTU() (int, error) {
+	routes, err := netlinkutil.RouteListFiltered(
+		netlink.FAMILY_V4,
+		&netlink.Route{Dst: nil},
+		netlink.RT_FILTER_DST)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(routes) > 1 {
+		klog.Warning("more than one default route found")
+	}
+
+	for _, route := range routes {
+		if defaultLink, err := netlink.LinkByIndex(route.LinkIndex); err == nil {
+			klog.InfoS("find default link", "name", defaultLink.Attrs().Name)
+			return defaultLink.Attrs().MTU, nil
+		}
+	}
+	return 0, fmt.Errorf("error get default mtu")
 }
 
 func GetPSK() string {

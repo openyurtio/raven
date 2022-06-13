@@ -32,7 +32,9 @@ import (
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
 )
 
-var AllZeroMAC = net.HardwareAddr{0, 0, 0, 0, 0, 0}
+var (
+	AllZeroMAC = net.HardwareAddr{0, 0, 0, 0, 0, 0}
+)
 
 func NewRavenRule(rulePriority int, routeTableID int) *netlink.Rule {
 	rule := netlink.NewRule()
