@@ -20,7 +20,9 @@ type Driver interface {
 	// Usually, the implementation should compare the current network state with the given desired state,
 	// and make changes to reach the desired state.
 	// This method should be idempotent.
-	Apply(network *types.Network) error
+	Apply(network *types.Network, vpnDriverMTUFn func() (int, error)) error
+	// MTU return Minimal MTU in route driver
+	MTU(network *types.Network) (int, error)
 	// Cleanup performs the necessary uninstallation.
 	Cleanup() error
 }

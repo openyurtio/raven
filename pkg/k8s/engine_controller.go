@@ -169,14 +169,15 @@ func (c *EngineController) sync() error {
 	}
 	nw := c.network.Copy()
 	klog.InfoS("applying network", "localEndpoint", nw.LocalEndpoint, "remoteEndpoint", nw.RemoteEndpoints)
-	err = c.vpnDriver.Apply(nw)
+	err = c.vpnDriver.Apply(nw, c.routeDriver.MTU)
 	if err != nil {
 		return err
 	}
-	err = c.routeDriver.Apply(nw)
+	err = c.routeDriver.Apply(nw, c.vpnDriver.MTU)
 	if err != nil {
 		return err
 	}
+
 	// Only update lastSeenNetwork when all operations succeeded.
 	c.lastSeenNetwork = c.network
 	return nil

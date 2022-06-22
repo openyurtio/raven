@@ -84,13 +84,16 @@ func isVxlanConfigChanged(newLink, currentLink netlink.Link) bool {
 	if required.VxlanId != existing.VxlanId {
 		return true
 	}
-	if len(required.Group) > 0 && len(existing.Group) > 0 && !required.Group.Equal(existing.Group) {
+	if !required.Group.Equal(existing.Group) {
 		return true
 	}
-	if len(required.SrcAddr) > 0 && len(existing.SrcAddr) > 0 && !required.SrcAddr.Equal(existing.SrcAddr) {
+	if !required.SrcAddr.Equal(existing.SrcAddr) {
 		return true
 	}
-	if required.Port > 0 && existing.Port > 0 && required.Port != existing.Port {
+	if required.Port != existing.Port {
+		return true
+	}
+	if required.MTU != existing.MTU {
 		return true
 	}
 	return false

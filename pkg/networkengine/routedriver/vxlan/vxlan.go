@@ -57,7 +57,7 @@ type vxlan struct {
 	nodeName   types.NodeName
 }
 
-func (vx *vxlan) Apply(network *types.Network) (err error) {
+func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error)) (err error) {
 	if network.LocalEndpoint == nil || len(network.RemoteEndpoints) == 0 {
 		klog.Info("no local gateway or remote gateway is found, cleaning up route setting")
 		return vx.Cleanup()
@@ -79,7 +79,7 @@ func (vx *vxlan) Apply(network *types.Network) (err error) {
 	// The key is netlink.Neigh.IP
 	var desiredFDBs, currentFDBs map[string]*netlink.Neigh
 
-	err = vx.ensureVxlanLink(network)
+	err = vx.ensureVxlanLink(network, vpnDriverMTUFn)
 	if err != nil {
 		return fmt.Errorf("error ensuring vxlan: %s", err)
 	}
@@ -123,6 +123,32 @@ func (vx *vxlan) Apply(network *types.Network) (err error) {
 	return nil
 }
 
+func (vx *vxlan) MTU(network *types.Network) (int, error) {
+	// The default link to other nodes in the gateway.
+	var defaultLink netlink.Link
+	var err error
+	if vx.isGatewayRole(network) {
+		for nodeName, v := range network.LocalNodeInfo {
+			if nodeName != vx.nodeName {
+				defaultLink, err = defaultLinkTo(net.ParseIP(v.PrivateIP))
+				if err != nil {
+					return 0, fmt.Errorf("error getting default link to: %s, %s", v.PrivateIP, err)
+				}
+				break
+			}
+		}
+	} else {
+		defaultLink, err = defaultLinkTo(net.ParseIP(network.LocalEndpoint.PrivateIP))
+		if err != nil {
+			return 0, fmt.Errorf("error getting default link to: %s, %s", network.LocalEndpoint.PrivateIP, err)
+		}
+	}
+	if defaultLink == nil {
+		return 0, fmt.Errorf("cannot find default link")
+	}
+	return defaultLink.Attrs().MTU - vxlanEncapLen, nil
+}
+
 // nodeInfo returns node info of the current node.
 func (vx *vxlan) nodeInfo(network *types.Network) *v1alpha1.NodeInfo {
 	return network.LocalNodeInfo[vx.nodeName]
@@ -138,33 +164,25 @@ func (vx *vxlan) Init() (err error) {
 	return nil
 }
 
-func (vx *vxlan) ensureVxlanLink(network *types.Network) (err error) {
-	// The default link to other nodes in the gateway.
-	var defaultLink netlink.Link
-	if vx.isGatewayRole(network) {
-		for nodeName, v := range network.LocalNodeInfo {
-			if nodeName != vx.nodeName {
-				defaultLink, err = defaultLinkTo(net.ParseIP(v.PrivateIP))
-				if err != nil {
-					return fmt.Errorf("error getting default link to: %s, %s", v.PrivateIP, err)
-				}
-				break
-			}
-		}
-	} else {
-		defaultLink, err = defaultLinkTo(net.ParseIP(network.LocalEndpoint.PrivateIP))
-		if err != nil {
-			return fmt.Errorf("error getting default link to: %s, %s", network.LocalEndpoint.PrivateIP, err)
-		}
+func (vx *vxlan) ensureVxlanLink(network *types.Network, vpnDriverMTUFn func() (int, error)) (err error) {
+	var vpnDriverMTU, routeDriverMTU int
+	vpnDriverMTU, err = vpnDriverMTUFn()
+	if err != nil {
+		return err
 	}
-	if defaultLink == nil {
-		return fmt.Errorf("cannot find default link")
+	routeDriverMTU, err = vx.MTU(network)
+	if err != nil {
+		return err
 	}
-
 	vxlanLink := netlink.Vxlan{
 		LinkAttrs: netlink.LinkAttrs{
-			Name:  vxlanLinkName,
-			MTU:   defaultLink.Attrs().MTU - vxlanEncapLen,
+			Name: vxlanLinkName,
+			MTU: func(a, b int) int {
+				if a > b {
+					return b
+				}
+				return a
+			}(vpnDriverMTU, routeDriverMTU),
 			Flags: net.FlagUp,
 		},
 		VxlanId: vxlanID,
