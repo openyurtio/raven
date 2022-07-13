@@ -232,34 +232,34 @@ func setSysctl(path string, contents []byte) error {
 //   ip route add {remote_subnet} via {local_gateway_raven0_ip} dev raven0 src {node_cni_ip} onlink mtu {mtu} table {routeTableID}
 func (vx *vxlan) calRouteOnNonGateway(network *types.Network) map[string]*netlink.Route {
 	routes := make(map[string]*netlink.Route)
-	var src net.IP
-	srcCIDR := vx.nodeInfo(network).Subnet
-	src, _, err := net.ParseCIDR(srcCIDR)
-	if err != nil {
-		klog.ErrorS(err, "error parsing cidr", "cidr", srcCIDR)
-		return routes
-	}
+	for _, srcCIDR := range vx.nodeInfo(network).Subnets {
+		src, _, err := net.ParseCIDR(srcCIDR)
+		if err != nil {
+			klog.ErrorS(err, "error parsing cidr", "cidr", srcCIDR)
+			return routes
+		}
 
-	via := vxlanIP(net.ParseIP(network.LocalEndpoint.PrivateIP))
-	for _, v := range network.RemoteEndpoints {
-		for _, dstCIDR := range v.Subnets {
-			_, ipnet, err := net.ParseCIDR(dstCIDR)
-			if err != nil {
-				klog.ErrorS(err, "error parsing cidr", "cidr", dstCIDR)
-				continue
+		via := vxlanIP(net.ParseIP(network.LocalEndpoint.PrivateIP))
+		for _, v := range network.RemoteEndpoints {
+			for _, dstCIDR := range v.Subnets {
+				_, ipnet, err := net.ParseCIDR(dstCIDR)
+				if err != nil {
+					klog.ErrorS(err, "error parsing cidr", "cidr", dstCIDR)
+					continue
+				}
+				nr := &netlink.Route{
+					LinkIndex: vx.vxlanIface.Attrs().Index,
+					Scope:     netlink.SCOPE_UNIVERSE,
+					Dst:       ipnet,
+					Gw:        via,
+					Table:     routeTableID,
+					Src:       src,
+					Flags:     int(netlink.FLAG_ONLINK),
+					// TODO should minus vpn mtu OverHead
+					MTU: vx.vxlanIface.Attrs().MTU,
+				}
+				routes[networkutil.RouteKey(nr)] = nr
 			}
-			nr := &netlink.Route{
-				LinkIndex: vx.vxlanIface.Attrs().Index,
-				Scope:     netlink.SCOPE_UNIVERSE,
-				Dst:       ipnet,
-				Gw:        via,
-				Table:     routeTableID,
-				Src:       src,
-				Flags:     int(netlink.FLAG_ONLINK),
-				// TODO should minus vpn mtu OverHead
-				MTU: vx.vxlanIface.Attrs().MTU,
-			}
-			routes[networkutil.RouteKey(nr)] = nr
 		}
 	}
 	return routes
@@ -287,22 +287,24 @@ func (vx *vxlan) calRouteOnGateway(network *types.Network) map[string]*netlink.R
 		if types.NodeName(v.NodeName) == vx.nodeName {
 			continue
 		}
-		_, dst, err := net.ParseCIDR(v.Subnet)
-		if err != nil {
-			klog.ErrorS(err, "error parsing cidr", "cidr", dst)
-			continue
+		for _, dstCIDR := range v.Subnets {
+			_, dst, err := net.ParseCIDR(dstCIDR)
+			if err != nil {
+				klog.ErrorS(err, "error parsing cidr", "cidr", dst)
+				continue
+			}
+			via := vxlanIP(net.ParseIP(v.PrivateIP))
+			nr := &netlink.Route{
+				LinkIndex: vx.vxlanIface.Attrs().Index,
+				Scope:     netlink.SCOPE_UNIVERSE,
+				Dst:       dst,
+				Gw:        via,
+				Table:     routeTableID,
+				Flags:     int(netlink.FLAG_ONLINK),
+				MTU:       vx.vxlanIface.Attrs().MTU,
+			}
+			routes[networkutil.RouteKey(nr)] = nr
 		}
-		via := vxlanIP(net.ParseIP(v.PrivateIP))
-		nr := &netlink.Route{
-			LinkIndex: vx.vxlanIface.Attrs().Index,
-			Scope:     netlink.SCOPE_UNIVERSE,
-			Dst:       dst,
-			Gw:        via,
-			Table:     routeTableID,
-			Flags:     int(netlink.FLAG_ONLINK),
-			MTU:       vx.vxlanIface.Attrs().MTU,
-		}
-		routes[networkutil.RouteKey(nr)] = nr
 	}
 	return routes
 }
@@ -314,21 +316,21 @@ func (vx *vxlan) calRouteOnGateway(network *types.Network) map[string]*netlink.R
 func (vx *vxlan) calRulesOnGateway(network *types.Network) map[string]*netlink.Rule {
 	rules := make(map[string]*netlink.Rule)
 	for _, v := range network.RemoteNodeInfo {
-		var srcCIDR *net.IPNet
-		var err error
 		nodeInfo := network.RemoteNodeInfo[types.NodeName(v.NodeName)]
 		if nodeInfo == nil {
 			klog.Errorf("node %s not found in RemoteNodeInfo", v.NodeName)
 			continue
 		}
-		_, srcCIDR, err = net.ParseCIDR(nodeInfo.Subnet)
-		if err != nil {
-			klog.ErrorS(err, "error parsing cidr", "cidr", srcCIDR)
-			continue
+		for _, srcCIDR := range nodeInfo.Subnets {
+			_, src, err := net.ParseCIDR(srcCIDR)
+			if err != nil {
+				klog.ErrorS(err, "error parsing cidr", "cidr", srcCIDR)
+				continue
+			}
+			rule := networkutil.NewRavenRule(rulePriority, routeTableID)
+			rule.Src = src
+			rules[networkutil.RuleKey(rule)] = rule
 		}
-		rule := networkutil.NewRavenRule(rulePriority, routeTableID)
-		rule.Src = srcCIDR
-		rules[networkutil.RuleKey(rule)] = rule
 	}
 	return rules
 }

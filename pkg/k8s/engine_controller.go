@@ -122,7 +122,7 @@ func (c *EngineController) processNextWorkItem() bool {
 func getMergedSubnets(nodeInfo []v1alpha1.NodeInfo) []string {
 	subnets := make([]string, 0)
 	for _, n := range nodeInfo {
-		subnets = append(subnets, n.Subnet)
+		subnets = append(subnets, n.Subnets...)
 	}
 	subnets, _ = cidrman.MergeCIDRs(subnets)
 	return subnets
