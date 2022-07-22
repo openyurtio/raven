@@ -37,7 +37,17 @@ jobs:
             ${{ runner.os }}-buildx-
 
       - name: Unit test
-        run: go test ./...
+        run: go test -v -short ./pkg/... ./cmd/... -coverprofile cover.out
+
+      - name: Publish Unit Test Coverage
+        uses: codecov/codecov-action@v3
+        with:
+          name: codecov-umbrella
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: unittests
+          files: ./cover.out
+          fail_ci_if_error: true
+          verbose: true
 
       - name: Docker meta
         id: meta
