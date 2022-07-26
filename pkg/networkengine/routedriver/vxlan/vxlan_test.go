@@ -20,11 +20,13 @@ import (
 	"net"
 	"testing"
 
+	"github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/apis/raven/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/vishvananda/netlink"
 
 	networkutil "github.com/openyurtio/raven/pkg/networkengine/util"
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
+	"github.com/openyurtio/raven/pkg/types"
 )
 
 func Test_applyRoutes(t *testing.T) {
@@ -316,6 +318,100 @@ func Test_applyRule(t *testing.T) {
 			} else {
 				a.Equal(v.expected, actual)
 			}
+		})
+	}
+}
+
+func TestVxlan_Apply(t *testing.T) {
+	network := &types.Network{
+		LocalEndpoint: &types.Endpoint{
+			GatewayName: "gw-1",
+			NodeName:    "node-1",
+			Subnets: []string{
+				"10.10.1.0/24",
+			},
+			PrivateIP: "192.168.1.1",
+		},
+		LocalNodeInfo: map[types.NodeName]*v1alpha1.NodeInfo{
+			"node-1": {
+				NodeName:  "node-1",
+				PrivateIP: "192.168.1.1",
+				Subnets: []string{
+					"10.10.1.0/24",
+				},
+			},
+			"node-4": {
+				NodeName:  "node-4",
+				PrivateIP: "192.168.1.4",
+				Subnets: []string{
+					"10.10.4.0/24",
+				},
+			},
+		},
+		RemoteEndpoints: map[types.GatewayName]*types.Endpoint{
+			"gw-2": {
+				GatewayName: "gw-2",
+				NodeName:    "node-2",
+				Subnets: []string{
+					"10.10.2.0/24",
+				},
+				PrivateIP: "192.168.1.2",
+			},
+			"gw-3": {
+				GatewayName: "gw-3",
+				NodeName:    "remoteGwNode12",
+				Subnets: []string{
+					"10.10.3.0/24",
+				},
+				PrivateIP: "192.168.1.3",
+			},
+		},
+		RemoteNodeInfo: map[types.NodeName]*v1alpha1.NodeInfo{
+			"node-2": {
+				NodeName:  "node-2",
+				PrivateIP: "192.168.1.2",
+				Subnets: []string{
+					"10.10.2.0/24",
+				},
+			},
+			"node-3": {
+				NodeName:  "node-3",
+				PrivateIP: "192.168.1.3",
+				Subnets: []string{
+					"10.10.3.0/24",
+				},
+			},
+		},
+	}
+
+	testcases := []struct {
+		name     string
+		nodeName types.NodeName
+		network  *types.Network
+	}{
+		{
+			name:     "test-gateway-vxlan-apply",
+			nodeName: "node-1",
+			network:  network,
+		},
+		{
+			name:     "test-non-gateway-vxlan-apply",
+			nodeName: "node-4",
+			network:  network,
+		},
+	}
+
+	for _, v := range testcases {
+		t.Run(v.name, func(t *testing.T) {
+			vx := vxlan{
+				nodeName: v.nodeName,
+			}
+			a := assert.New(t)
+			a.NoError(vx.Init())
+			a.NoError(vx.Apply(v.network, func() (int, error) {
+				return 1500, nil
+			}))
+			a.NoError(vx.Cleanup())
 		})
 	}
 }
