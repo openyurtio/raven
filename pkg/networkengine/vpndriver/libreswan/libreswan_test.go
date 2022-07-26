@@ -121,6 +121,9 @@ func TestLibreswan_Apply(t *testing.T) {
 					},
 				},
 			},
+			findCentralGw: func(network *types.Network) *types.Endpoint {
+				return network.LocalEndpoint
+			},
 		}, {
 			name:     "all-NATed-gateway",
 			nodeName: "localGwNode",
@@ -154,6 +157,9 @@ func TestLibreswan_Apply(t *testing.T) {
 						UnderNAT:    true,
 					},
 				},
+			},
+			findCentralGw: func(network *types.Network) *types.Endpoint {
+				return nil
 			},
 		}, {
 			name:     "NATed-gateway-connect-to-central-gateway",
@@ -197,6 +203,9 @@ func TestLibreswan_Apply(t *testing.T) {
 						UnderNAT:    true,
 					},
 				},
+			},
+			findCentralGw: func(network *types.Network) *types.Endpoint {
+				return network.RemoteEndpoints["centralGw"]
 			},
 		},
 		{
@@ -353,14 +362,6 @@ func TestLibreswan_Apply(t *testing.T) {
 	}
 	for _, v := range testcases {
 		t.Run(v.name, func(t *testing.T) {
-			if v.name != "central-gateway-connect-to-NATed-gateways-and-not-NATed-gateway" {
-				return
-			}
-			if v.findCentralGw != nil {
-				findCentralGw = func(network *types.Network) *types.Endpoint {
-					return network.LocalEndpoint
-				}
-			}
 			var cleanup bool
 			netlinkutil.XfrmPolicyFlush = func() error {
 				cleanup = true

@@ -37,7 +37,7 @@ jobs:
             ${{ runner.os }}-buildx-
 
       - name: Unit test
-        run: go test -v -short ./pkg/... ./cmd/... -coverprofile cover.out
+        run: sudo go test -v -short ./pkg/... ./cmd/... -coverprofile cover.out
 
       - name: Publish Unit Test Coverage
         uses: codecov/codecov-action@v3
@@ -97,7 +97,7 @@ jobs:
             ${{ runner.os }}-buildx-
 
       - name: Unit test
-        run: go test ./...
+        run: sudo go test -v -short ./pkg/... ./cmd/...
 
       - name: Docker meta
         id: meta
