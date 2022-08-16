@@ -2,6 +2,7 @@
 
 <div align="left">
 
+[![Version](https://img.shields.io/badge/Raven-v0.1.0-orange)](https://github.com/openyurtio/raven/releases/tag/v0.1.0)
 [![Go Report Card](https://goreportcard.com/badge/github.com/openyurtio/raven)](https://goreportcard.com/report/github.com/openyurtio/raven)
 [![License](https://img.shields.io/badge/license-Apache%202-4EB1BA.svg)](https://www.apache.org/licenses/LICENSE-2.0.html)
 [![codecov](https://codecov.io/gh/openyurtio/raven/branch/main/graph/badge.svg)](https://codecov.io/gh/openyurtio/raven)
