@@ -18,7 +18,7 @@ package utils
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"regexp"
 )
@@ -49,7 +49,7 @@ func getFromAPI(api string) (string, error) {
 		return "", fmt.Errorf("retrieving public ip from %s: %v", api, err)
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("reading api response from %s: %v", api, err)
 	}

@@ -19,8 +19,8 @@ package vxlan
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"net"
+	"os"
 	"syscall"
 
 	"github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/apis/raven/v1alpha1"
@@ -209,7 +209,7 @@ func (vx *vxlan) ensureVxlanLink(network *types.Network, vpnDriverMTUFn func() (
 }
 
 func setSysctl(path string, contents []byte) error {
-	existing, err := ioutil.ReadFile(path)
+	existing, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
@@ -222,7 +222,7 @@ func setSysctl(path string, contents []byte) error {
 	}
 	// Permissions are already 644, the files are never created
 	// #nosec G306
-	return ioutil.WriteFile(path, contents, 0o644)
+	return os.WriteFile(path, contents, 0o644)
 }
 
 // calRouteOnNonGateway calculates and returns the desired routes on non-gateway node.
