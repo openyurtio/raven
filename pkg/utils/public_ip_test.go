@@ -27,13 +27,15 @@ const (
 )
 
 func TestGetPublicIP(t *testing.T) {
+	res, _ := getFromAPI(APIs[0])
+
 	tests := []struct {
 		name   string
 		expect string
 	}{
 		{
 			name:   "normal",
-			expect: "106.11.34.43",
+			expect: res,
 		},
 	}
 
