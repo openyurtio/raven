@@ -29,7 +29,7 @@ const (
 )
 
 func TestString(t *testing.T) {
-	var e *Endpoint = &Endpoint{
+	var e = &Endpoint{
 		PrivateIP: "192.168.1.1",
 	}
 
@@ -59,7 +59,7 @@ func TestString(t *testing.T) {
 }
 
 func TestCopy(t *testing.T) {
-	var e *Endpoint = &Endpoint{
+	var e = &Endpoint{
 		PrivateIP: "192.168.1.1",
 	}
 
@@ -96,7 +96,7 @@ func TestCopy(t *testing.T) {
 }
 
 func TestNCopy(t *testing.T) {
-	var n *Network = &Network{
+	var n = &Network{
 		LocalEndpoint: &Endpoint{
 			PrivateIP: "192.168.1.1",
 		},
