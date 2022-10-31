@@ -6,7 +6,7 @@ require (
 	github.com/EvilSuperstars/go-cidrman v0.0.0-20190607145828-28e79e32899a
 	github.com/openyurtio/raven-controller-manager v0.1.1-0.20220712045115-14910b0bce36
 	github.com/pkg/errors v0.9.1
-	github.com/spf13/cobra v1.6.0
+	github.com/spf13/cobra v1.6.1
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.8.1
 	github.com/vdobler/ht v5.3.0+incompatible
