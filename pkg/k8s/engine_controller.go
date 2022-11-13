@@ -303,7 +303,19 @@ func (c *EngineController) updateGateway(oldObj interface{}, newObj interface{})
 }
 
 func (c *EngineController) deleteGateway(obj interface{}) {
-	gw := obj.(*v1alpha1.Gateway)
+	gw, ok := obj.(*v1alpha1.Gateway)
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			klog.Errorf("couldn't get object from tombstone %#v", obj)
+			return
+		}
+		gw, ok = tombstone.Obj.(*v1alpha1.Gateway)
+		if !ok {
+			klog.Errorf("tombstone contained object that is not a Gateway %#v", obj)
+			return
+		}
+	}
 	klog.InfoS("deleting gateway", "gateway", klog.KObj(gw))
 	c.enqueue(gw)
 }
