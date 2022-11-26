@@ -1,0 +1,74 @@
+# Default values for raven-agent.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+  repository: openyurt/raven-agent
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: latest
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: "raven-agent-account"
+
+podAnnotations: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext:
+  privileged: true
+
+nodeSelector:
+  beta.kubernetes.io/arch: amd64
+  beta.kubernetes.io/os: linux
+
+tolerations: [{"operator": "Exists"}]
+
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: type
+              operator: NotIn
+              values:
+                - virtual-kubelet
+
+containerEnv:
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    - name: VPN_CONNECTION_PSK
+      valueFrom:
+        secretKeyRef:
+          key: vpn-connection-psk
+          name: raven-agent-secret
+    - name: VPN_DRIVER
+      valueFrom:
+        configMapKeyRef:
+          key: vpn-driver
+          name: raven-agent-config
+vpn:
+  driver: libreswan
+  # raven-agent requires a unique vpn psk
+  # You can generate one with the command:
+  # 'openssl rand -hex 64'
+  # Pass it to helm with '--set vpn.psk=`openssl rand -hex 64`'
+  # IMPORTANT: You should NOT use the example psk for a production deployment!
+  psk: OPENYURT-RAVEN-AGENT-VPN-PSK
+rollingUpdate:
+  maxUnavailable: 5%
