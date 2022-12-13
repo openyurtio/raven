@@ -182,25 +182,39 @@ func (l *libreswan) whackConnectToEndpoint(connectionName string, connection *vp
 	rightID := fmt.Sprintf("@%s-%s-%s", connection.RemoteEndpoint.PrivateIP, connection.RemoteSubnet, connection.LocalSubnet)
 	//TODO Configure "--forceencaps" only when necessary.
 	//  "--forceencaps" is not necessary for endpoints that are not behind NAT device.
-	args = append(args, "--psk", "--encrypt", "--forceencaps", "--name", connectionName,
-		// local
-		"--id", leftID,
-		"--host", connection.LocalEndpoint.String(),
-		"--client", connection.LocalSubnet,
-		"--ikeport", "4500",
-
-		"--to",
-
-		// remote
-		"--id", rightID,
-		"--host", connection.RemoteEndpoint.PublicIP,
-		"--client", connection.RemoteSubnet,
-		"--ikeport", "4500")
+	// local
+	if !connection.LocalEndpoint.UnderNAT {
+		args = append(args, "--psk", "--encrypt", "--forceencaps", "--name", connectionName,
+			"--id", leftID,
+			"--host", connection.LocalEndpoint.String(),
+			"--client", connection.LocalSubnet,
+			"--ikeport", "4500",
+		)
+	} else {
+		args = append(args, "--psk", "--encrypt", "--forceencaps", "--name", connectionName,
+			"--id", leftID,
+			"--host", connection.LocalEndpoint.String(),
+			"--client", connection.LocalSubnet,
+		)
+	}
+	// remote
+	if !connection.RemoteEndpoint.UnderNAT {
+		args = append(args, "--to",
+			"--id", rightID,
+			"--host", connection.RemoteEndpoint.PublicIP,
+			"--client", connection.RemoteSubnet,
+			"--ikeport", "4500")
+	} else {
+		args = append(args, "--to",
+			"--id", rightID,
+			"--host", "%any",
+			"--client", connection.RemoteSubnet)
+	}
 
 	if err := whackCmd(args...); err != nil {
 		return err
 	}
-	if connection.LocalEndpoint.UnderNAT {
+	if connection.LocalEndpoint.UnderNAT || (!connection.LocalEndpoint.UnderNAT && !connection.RemoteEndpoint.UnderNAT) {
 		if err := whackCmd("--route", "--name", connectionName); err != nil {
 			return err
 		}

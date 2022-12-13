@@ -38,3 +38,8 @@ spec:
                 configMapKeyRef:
                   name: agent-config
                   key: vpn-driver
+            - name: FORWARD_NODE_IP
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: forward-node-ip

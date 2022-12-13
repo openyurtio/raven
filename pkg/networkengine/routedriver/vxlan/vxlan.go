@@ -19,6 +19,7 @@ package vxlan
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"syscall"
@@ -128,6 +129,10 @@ func (vx *vxlan) MTU(network *types.Network) (int, error) {
 	var defaultLink netlink.Link
 	var err error
 	if vx.isGatewayRole(network) {
+		// Only one node, vxlan interface is ignored
+		if len(network.LocalNodeInfo) == 1 {
+			return math.MaxInt, nil
+		}
 		for nodeName, v := range network.LocalNodeInfo {
 			if nodeName != vx.nodeName {
 				defaultLink, err = defaultLinkTo(net.ParseIP(v.PrivateIP))
@@ -229,7 +234,8 @@ func setSysctl(path string, contents []byte) error {
 // Routes on non-gateway node will use a separate route table(raven route table),
 // and configure the local gateway node as the next hop for packets sending to remote gateway nodes.
 // The routes entries format are equivalent to the following `ip route` command:
-//   ip route add {remote_subnet} via {local_gateway_raven0_ip} dev raven0 src {node_cni_ip} onlink mtu {mtu} table {routeTableID}
+//
+//	ip route add {remote_subnet} via {local_gateway_raven0_ip} dev raven0 src {node_cni_ip} onlink mtu {mtu} table {routeTableID}
 func (vx *vxlan) calRouteOnNonGateway(network *types.Network) map[string]*netlink.Route {
 	routes := make(map[string]*netlink.Route)
 	for _, srcCIDR := range vx.nodeInfo(network).Subnets {
@@ -268,7 +274,8 @@ func (vx *vxlan) calRouteOnNonGateway(network *types.Network) map[string]*netlin
 // calRulesOnNonGateway calculates and returns the desired rules on non-gateway node.
 // Rules on non-gateway will give raven route table a higher priority than main table in order to bypass the CNI routing rules.
 // The rules format are equivalent to the following `ip rule` command:
-//   ip rule add from all lookup {routeTableID} prio {rulePriority}
+//
+//	ip rule add from all lookup {routeTableID} prio {rulePriority}
 func (vx *vxlan) calRulesOnNonGateway() map[string]*netlink.Rule {
 	rules := make(map[string]*netlink.Rule)
 	rule := networkutil.NewRavenRule(rulePriority, routeTableID)
@@ -280,7 +287,8 @@ func (vx *vxlan) calRulesOnNonGateway() map[string]*netlink.Rule {
 // Routes on gateway node are used to configure the reverse-path route for packets from local non-gateway nodes to remote nodes,
 // to avoid asymmetric routing.
 // The routes entries format are equivalent to the following `ip route` command:
-//   ip route add {non_gateway_nodeN_cidr} via {non_gateway_nodeN_raven0_ip} dev raven0 onlink mtu {mtu} table {routeTableID}
+//
+//	ip route add {non_gateway_nodeN_cidr} via {non_gateway_nodeN_raven0_ip} dev raven0 onlink mtu {mtu} table {routeTableID}
 func (vx *vxlan) calRouteOnGateway(network *types.Network) map[string]*netlink.Route {
 	routes := make(map[string]*netlink.Route)
 	for _, v := range network.LocalNodeInfo {
@@ -312,7 +320,8 @@ func (vx *vxlan) calRouteOnGateway(network *types.Network) map[string]*netlink.R
 // calRulesOnGateway calculates and returns the desired rules on gateway node.
 // Rules on gateway node are used to configure route policy for the reverse-path route.
 // The rules format are equivalent to the following `ip rule` command:
-//   ip rule add from {remote_nodeN_subnet_cidr} lookup {routeTableID} prio {rulePriority}
+//
+//	ip rule add from {remote_nodeN_subnet_cidr} lookup {routeTableID} prio {rulePriority}
 func (vx *vxlan) calRulesOnGateway(network *types.Network) map[string]*netlink.Rule {
 	rules := make(map[string]*netlink.Rule)
 	for _, v := range network.RemoteNodeInfo {
@@ -337,7 +346,8 @@ func (vx *vxlan) calRulesOnGateway(network *types.Network) map[string]*netlink.R
 
 // calFDBOnGateway calculates and returns the desired FDB entries on gateway node.
 // The FDB entries format are equivalent to the following `bridge fdb append` command:
-//   bridge fdb append 00:00:00:00:00:00 dev raven0 dst {non_gateway_nodeN_private_ip} self permanent
+//
+//	bridge fdb append 00:00:00:00:00:00 dev raven0 dst {non_gateway_nodeN_private_ip} self permanent
 func (vx *vxlan) calFDBOnGateway(network *types.Network) map[string]*netlink.Neigh {
 	fdbs := make(map[string]*netlink.Neigh)
 	for k, v := range network.LocalNodeInfo {
@@ -359,7 +369,8 @@ func (vx *vxlan) calFDBOnGateway(network *types.Network) map[string]*netlink.Nei
 
 // calFDBOnNonGateway calculates and returns the desired FDB entries on non-gateway node.
 // The FDB entries format are equivalent to the following `bridge fdb append` command:
-//   bridge fdb append 00:00:00:00:00:00 dev raven0 dst {gateway_node_private_ip} self permanent
+//
+//	bridge fdb append 00:00:00:00:00:00 dev raven0 dst {gateway_node_private_ip} self permanent
 func (vx *vxlan) calFDBOnNonGateway(network *types.Network) map[string]*netlink.Neigh {
 	return map[string]*netlink.Neigh{
 		network.LocalEndpoint.PrivateIP: {

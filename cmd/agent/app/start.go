@@ -75,7 +75,7 @@ func Run(cfg *config.CompletedConfig, stopCh <-chan struct{}) error {
 	}
 	klog.Infof("VPN driver %s initialized", cfg.VPNDriver)
 	// start network engine controller
-	ec, err := k8s.NewEngineController(cfg.NodeName, cfg.RavenClient, routeDriver, vpnDriver)
+	ec, err := k8s.NewEngineController(cfg.NodeName, cfg.ForwardNodeIP, cfg.RavenClient, routeDriver, vpnDriver)
 	if err != nil {
 		return fmt.Errorf("could not create network engine controller: %s", err)
 	}

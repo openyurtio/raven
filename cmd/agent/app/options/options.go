@@ -17,10 +17,11 @@ import (
 
 // AgentOptions has the information that required by the raven agent
 type AgentOptions struct {
-	NodeName    string
-	Kubeconfig  string
-	VPNDriver   string
-	RouteDriver string
+	NodeName      string
+	Kubeconfig    string
+	VPNDriver     string
+	RouteDriver   string
+	ForwardNodeIP bool
 }
 
 // Validate validates the AgentOptions
@@ -40,15 +41,17 @@ func (o *AgentOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.Kubeconfig, "kubeconfig", o.Kubeconfig, "Path to the kubeconfig file.")
 	fs.StringVar(&o.VPNDriver, "vpn-driver", o.VPNDriver, `The VPN driver name. (default "libreswan")`)
 	fs.StringVar(&o.RouteDriver, "route-driver", o.RouteDriver, `The Route driver name. (default "vxlan")`)
+	fs.BoolVar(&o.ForwardNodeIP, "forward-node-ip", o.ForwardNodeIP, `Forward node IP or not. (default "false")`)
 }
 
 // Config return a raven agent config objective
 func (o *AgentOptions) Config() (*config.Config, error) {
 	var err error
 	c := &config.Config{
-		NodeName:    o.NodeName,
-		VPNDriver:   o.VPNDriver,
-		RouteDriver: o.RouteDriver,
+		NodeName:      o.NodeName,
+		VPNDriver:     o.VPNDriver,
+		RouteDriver:   o.RouteDriver,
+		ForwardNodeIP: o.ForwardNodeIP,
 	}
 	cfg, err := clientcmd.BuildConfigFromFlags("", o.Kubeconfig)
 	if err != nil {
