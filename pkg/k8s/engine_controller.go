@@ -18,6 +18,7 @@ package k8s
 
 import (
 	"context"
+	"net"
 	"reflect"
 	"time"
 
@@ -46,9 +47,10 @@ const (
 )
 
 type EngineController struct {
-	nodeName  string
-	nodeInfos map[types.NodeName]*v1alpha1.NodeInfo
-	network   *types.Network
+	nodeName      string
+	forwardNodeIP bool
+	nodeInfos     map[types.NodeName]*v1alpha1.NodeInfo
+	network       *types.Network
 	// lastSeenNetwork tracks the last seen Network.
 	lastSeenNetwork *types.Network
 
@@ -63,14 +65,15 @@ type EngineController struct {
 	vpnDriver   vpndriver.Driver
 }
 
-func NewEngineController(nodeName string, ravenClient *ravenclientset.Clientset,
+func NewEngineController(nodeName string, forwardNodeIP bool, ravenClient *ravenclientset.Clientset,
 	routeDriver routedriver.Driver, vpnDriver vpndriver.Driver) (*EngineController, error) {
 	ctr := &EngineController{
-		nodeName:    nodeName,
-		ravenClient: ravenClient,
-		queue:       workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
-		routeDriver: routeDriver,
-		vpnDriver:   vpnDriver,
+		nodeName:      nodeName,
+		forwardNodeIP: forwardNodeIP,
+		ravenClient:   ravenClient,
+		queue:         workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
+		routeDriver:   routeDriver,
+		vpnDriver:     vpnDriver,
 	}
 
 	ravenInformer := raveninformer.NewSharedInformerFactory(ctr.ravenClient, 24*time.Hour)
@@ -119,10 +122,17 @@ func (c *EngineController) processNextWorkItem() bool {
 	return true
 }
 
-func getMergedSubnets(nodeInfo []v1alpha1.NodeInfo) []string {
+func (c *EngineController) getMergedSubnets(nodeInfo []v1alpha1.NodeInfo) []string {
 	subnets := make([]string, 0)
 	for _, n := range nodeInfo {
 		subnets = append(subnets, n.Subnets...)
+		if c.forwardNodeIP {
+			nodeSubnet := net.IPNet{
+				IP:   net.ParseIP(n.PrivateIP),
+				Mask: []byte{0xff, 0xff, 0xff, 0xff},
+			}
+			subnets = append(subnets, nodeSubnet.String())
+		}
 	}
 	subnets, _ = cidrman.MergeCIDRs(subnets)
 	return subnets
@@ -191,7 +201,7 @@ func (c *EngineController) syncNodeInfo(nodes []v1alpha1.NodeInfo) {
 
 func (c *EngineController) syncGateway(gw *v1alpha1.Gateway) {
 	aep := gw.Status.ActiveEndpoint
-	subnets := getMergedSubnets(gw.Status.Nodes)
+	subnets := c.getMergedSubnets(gw.Status.Nodes)
 	cfg := make(map[string]string)
 	for k := range aep.Config {
 		cfg[k] = aep.Config[k]

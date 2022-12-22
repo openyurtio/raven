@@ -44,10 +44,14 @@ wlcb-node2 labeled
 
 ### install raven agent
 
+- Run the following commands:
+
 ```bash
 cd raven
 make deploy
 ```
+
+- Open the UDP port 4500 on gateway nodes.
 
 Wait for the raven agent daemon to be created successfully
 
@@ -174,4 +178,30 @@ PING 10.14.2.70 (10.14.2.70) 56(84) bytes of data.
 4 packets transmitted, 4 received, 0% packet loss, time 3003ms
 rtt min/avg/max/mdev = 32.047/32.136/32.246/0.081 ms
 
+```
+
+## (Optional 1) Enable node IP forward
+
+By default, raven only forward cross-edge traffic of container network. If you also want to forward the network traffic of edge nodes. You can run the following command:
+
+```bash
+cd raven
+make undeploy
+FORWARD_NODE_IP=true make deploy
+```
+
+NOTE: Make sure there are no node IP conflicts in the cluster.
+
+## (Optional 2) Use WireGuard as VPN backend
+
+By default, raven uses IPSec as VPN backend, we also provide [WireGuard](https://www.wireguard.com/) as an alternative. You can switch to WireGuard backend by the following steps:
+
+- Raven requires the WireGuard kernel module to be loaded on gateway nodes in the cluster. Starting at Linux 5.6, the kernel includes WireGuard in-tree; Linux distributions with older kernels will need to install WireGuard. For most Linux distributions, this can be done using the system package manager. For more information, see [Install WireGuard](https://www.wireguard.com/install/).
+- The gateway nodes will require an open UDP port in order to communicate. By default, WireGuard uses UDP port 51820.
+- Run the following commands:
+
+```bash
+cd raven
+make undeploy
+VPN_DRIVER=wireguard make deploy
 ```
