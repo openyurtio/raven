@@ -1,0 +1,16 @@
+apiVersion: v1
+data:
+  vpn-driver: {{ .Values.vpn.driver }}
+kind: ConfigMap
+metadata:
+  name: raven-agent-config
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+data:
+  vpn-connection-psk: {{ .Values.vpn.psk | b64enc }}
+kind: Secret
+metadata:
+  name: raven-agent-secret
+  namespace: {{ .Release.Namespace }}
+type: Opaque
