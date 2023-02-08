@@ -52,12 +52,12 @@ const (
 	// PublicKey is name (key) of publicKey entry in back-end map.
 	PublicKey = "publicKey"
 	// KeepAliveInterval to use for wg peers.
-	KeepAliveInterval = 10 * time.Second
+	KeepAliveInterval = 5 * time.Second
 
 	// DeviceName specifies name of WireGuard network device.
 	DeviceName = "raven-wg0"
 	// ListenPort specifies port of WireGuard listened.
-	ListenPort = 51820
+	ListenPort = 4500
 )
 
 var findCentralGw = vpndriver.FindCentralGwFn
@@ -417,7 +417,8 @@ func (w *wireguard) configGatewayPublicKey(gwName string, nodeName string) error
 // calWgRules calculates and returns the desired WireGuard rules on gateway node.
 // Rules on gateway will give raven route table a higher priority than main table in order to bypass the CNI routing rules.
 // The rules format are equivalent to the following `ip rule` command:
-//   ip rule add from all lookup {wgRouteTableID} prio {wgRulePriority}
+//
+//	ip rule add from all lookup {wgRouteTableID} prio {wgRulePriority}
 func (w *wireguard) calWgRules() map[string]*netlink.Rule {
 	rules := make(map[string]*netlink.Rule)
 	rule := networkutil.NewRavenRule(wgRulePriority, wgRouteTableID)
@@ -428,7 +429,8 @@ func (w *wireguard) calWgRules() map[string]*netlink.Rule {
 // calWgRoutes calculates and returns the desired WireGuard routes on gateway node.
 // Routes on gateway node will use a separate route table(wg route table),
 // The routes entries format are equivalent to the following `ip route` command:
-//   ip route add {remote_subnet} dev raven-wg0 table {wgRouteTableID}
+//
+//	ip route add {remote_subnet} dev raven-wg0 table {wgRouteTableID}
 func (w *wireguard) calWgRoutes(network *types.Network) map[string]*netlink.Route {
 	routes := make(map[string]*netlink.Route)
 	for _, v := range network.RemoteEndpoints {

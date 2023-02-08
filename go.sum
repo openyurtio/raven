@@ -411,8 +411,8 @@ github.com/onsi/gomega v1.10.1/go.mod h1:iN09h71vgCQne3DLsj+A5owkum+a2tYe+TOCB1y
 github.com/onsi/gomega v1.17.0 h1:9Luw4uT5HTjHTN8+aNcSThgH1vdXnmdJ8xIfZ4wyTRE=
 github.com/onsi/gomega v1.17.0/go.mod h1:HnhC7FXeEQY45zxNK3PPoIUhzk/80Xly9PcubAlGdZY=
 github.com/opentracing/opentracing-go v1.1.0/go.mod h1:UkNAQd3GIcIGf0SeVgPpRdFStlNbqXla1AfSYxPUl2o=
-github.com/openyurtio/raven-controller-manager v0.1.1-0.20220712045115-14910b0bce36 h1:HW8NZch3pBHxzYknwga5Wcf3LvcZ7Z5AxHdb0SWQFD4=
-github.com/openyurtio/raven-controller-manager v0.1.1-0.20220712045115-14910b0bce36/go.mod h1:QkKI16Qr4wECtjA6e9QV4bNUmQj4zPEJNbz0tYvqdA0=
+github.com/openyurtio/raven-controller-manager v0.3.1-0.20230220020223-39cb99a72df9 h1:SY2xf14YoPKbZfjyHPzaV/gn710Z1s/MKVxQ6lA790Y=
+github.com/openyurtio/raven-controller-manager v0.3.1-0.20230220020223-39cb99a72df9/go.mod h1:op6Yh+6WYNF6EdIMyiK+yHxjOhxmAgfDHhHizZakgXM=
 github.com/pascaldekloe/goe v0.0.0-20180627143212-57f6aae5913c/go.mod h1:lzWF7FIEvWOWxwDKqyGYQf6ZUaNfKdP144TG7ZOy1lc=
 github.com/pelletier/go-toml v1.2.0/go.mod h1:5z9KED0ma1S8pY6P1sdut58dfprrGBbd/94hg7ilaic=
 github.com/pelletier/go-toml v1.9.3/go.mod h1:u1nR/EPcESfeI/szUZKdtJ0xRNbUoANCkoOuaOx1Y+c=

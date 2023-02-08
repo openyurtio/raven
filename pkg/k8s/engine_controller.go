@@ -272,10 +272,12 @@ func (c *EngineController) configGatewayPublicIP(gateway *v1alpha1.Gateway) erro
 	if gateway.Status.ActiveEndpoint.NodeName != c.nodeName {
 		return nil
 	}
+
 	publicIP, err := utils.GetPublicIP()
 	if err != nil {
 		return err
 	}
+
 	// retry to update public ip of localGateway
 	err = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		// get localGateway from api server

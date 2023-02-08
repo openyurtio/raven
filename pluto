@@ -26,4 +26,4 @@ set -e
 /usr/sbin/ipsec --checknss
 
 # Start the daemon itself with any additional arguments passed in
-exec /usr/libexec/ipsec/pluto --leak-detective --config /etc/ipsec.conf --nofork  "$@"
+exec /usr/libexec/ipsec/pluto --leak-detective --config /etc/ipsec.conf --keep-alive 5 --nofork  "$@"
