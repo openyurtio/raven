@@ -14,7 +14,7 @@ COPY pkg/ pkg/
 COPY cmd/ cmd/
 
 # Build
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -a -o agent cmd/agent/main.go
+RUN CGO_ENABLED=0 GO111MODULE=on go build -a -o agent cmd/agent/main.go
 
 
 FROM alpine:3.15
