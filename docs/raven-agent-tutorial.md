@@ -197,11 +197,28 @@ NOTE: Make sure there are no node IP conflicts in the cluster.
 By default, raven uses IPSec as VPN backend, we also provide [WireGuard](https://www.wireguard.com/) as an alternative. You can switch to WireGuard backend by the following steps:
 
 - Raven requires the WireGuard kernel module to be loaded on gateway nodes in the cluster. Starting at Linux 5.6, the kernel includes WireGuard in-tree; Linux distributions with older kernels will need to install WireGuard. For most Linux distributions, this can be done using the system package manager. For more information, see [Install WireGuard](https://www.wireguard.com/install/).
-- The gateway nodes will require an open UDP port in order to communicate. By default, WireGuard uses UDP port 51820.
+- The gateway nodes will require an open UDP port in order to communicate. By default, we use UDP port 4500.
 - Run the following commands:
 
 ```bash
 cd raven
 make undeploy
 VPN_DRIVER=wireguard make deploy
+```
+
+## (Optional 3) Use LoadBalancer to expose cloud gateway VPN service
+
+By default, raven use EIP/Public IP to expose cloud gateway VPN service, we also provide LoadBalancer as an alternative. You can set `exposeType: LoadBalancer` in Gateway CR to enable it.
+
+```bash
+$ cat <<EOF | kubectl apply -f -
+apiVersion: raven.openyurt.io/v1alpha1
+kind: Gateway
+metadata:
+  name: gw-cloud
+spec:
+  exposeType: LoadBalancer
+  endpoints:
+    - nodeName: master
+      underNAT: false
 ```
