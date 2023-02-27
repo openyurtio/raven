@@ -8,7 +8,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v1.6.1
 	github.com/spf13/pflag v1.0.5
-	github.com/stretchr/testify v1.8.1
+	github.com/stretchr/testify v1.8.2
 	github.com/vdobler/ht v5.3.0+incompatible
 	github.com/vishvananda/netlink v1.1.1-0.20220112194529-e5fd1f8193de
 	golang.org/x/net v0.0.0-20220607020251-c690dde0001d // indirect
