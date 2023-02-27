@@ -10,7 +10,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.8.1
 	github.com/vdobler/ht v5.3.0+incompatible
-	github.com/vishvananda/netlink v1.1.1-0.20220112194529-e5fd1f8193de
+	github.com/vishvananda/netlink v1.2.1-beta.2
 	golang.org/x/net v0.0.0-20220607020251-c690dde0001d // indirect
 	golang.org/x/sys v0.0.0-20220610221304-9f5ed59c137d // indirect
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20220504211119-3d4a969bb56b
