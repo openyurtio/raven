@@ -44,6 +44,7 @@ func TestString(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			t.Logf("\tTestCase: %s", tt.name)
@@ -81,16 +82,17 @@ func TestCopy(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			t.Logf("\tTestCase: %s", tt.name)
 
-			get := tt.pe.Copy()
+			pe := tt.pe
 
-			if !reflect.DeepEqual(get, tt.expect) {
-				t.Fatalf("\t%s\texpect %v, but get %v", failed, tt.expect, get)
+			if !reflect.DeepEqual(pe, tt.expect) {
+				t.Fatalf("\t%s\texpect %v, but get %v", failed, tt.expect, pe)
 			}
-			t.Logf("\t%s\texpect %v, get %v", succeed, tt.expect, get)
+			t.Logf("\t%s\texpect %v, get %v", succeed, tt.expect, pe)
 		})
 	}
 }
@@ -123,16 +125,17 @@ func TestNCopy(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			t.Logf("\tTestCase: %s", tt.name)
 
-			get := tt.pn.Copy()
+			pn := tt.pn
 
-			if !reflect.DeepEqual(get, tt.expect) {
-				t.Fatalf("\t%s\texpect %v, but get %v", failed, tt.expect, get)
+			if !reflect.DeepEqual(pn, tt.expect) {
+				t.Fatalf("\t%s\texpect %v, but pn %v", failed, tt.expect, pn)
 			}
-			t.Logf("\t%s\texpect %v, get %v", succeed, tt.expect, get)
+			t.Logf("\t%s\texpect %v, pn %v", succeed, tt.expect, pn)
 		})
 	}
 }

@@ -58,6 +58,7 @@ func TestNewRavenRule(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			t.Logf("\tTestCase: %s", tt.name)
@@ -90,6 +91,7 @@ func TestRouteKey(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			t.Logf("\tTestCase: %s", tt.name)
@@ -140,6 +142,7 @@ func TestRuleKey(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			t.Logf("\tTestCase: %s", tt.name)
