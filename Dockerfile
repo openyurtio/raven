@@ -1,5 +1,5 @@
 # Build the manager binary
-FROM golang:1.17 as builder
+FROM --platform=${BUILDPLATFORM} golang:1.18 as builder
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
@@ -13,11 +13,14 @@ RUN go mod download
 COPY pkg/ pkg/
 COPY cmd/ cmd/
 
+ARG TARGETOS
+ARG ARGETARCH
+
 # Build
-RUN CGO_ENABLED=0 GO111MODULE=on go build -a -o agent cmd/agent/main.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=on go build -a -o agent cmd/agent/main.go
 
 
-FROM alpine:3.15
+FROM alpine:3.17
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories \
     && apk add openrc libreswan libreswan-openrc iptables python3 bash --no-cache \
     && sed -i 's/runscript/openrc-run/g' /etc/init.d/ipsec \
