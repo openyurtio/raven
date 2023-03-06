@@ -20,7 +20,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/apis/raven/v1alpha1"
+	"github.com/openyurtio/openyurt/pkg/apis/raven/v1alpha1"
 )
 
 const (

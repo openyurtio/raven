@@ -17,15 +17,15 @@
 package config
 
 import (
-	ravenclientset "github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/client/clientset/versioned"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
 // Config is the main context object for raven agent
 type Config struct {
 	NodeName      string
-	RavenClient   *ravenclientset.Clientset
 	Kubeconfig    *rest.Config
+	Manager       manager.Manager
 	VPNDriver     string
 	RouteDriver   string
 	ForwardNodeIP bool
