@@ -25,15 +25,15 @@ import (
 	"reflect"
 	"time"
 
-	ravenclientset "github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/client/clientset/versioned"
+	"github.com/openyurtio/openyurt/pkg/apis/raven/v1alpha1"
 	"github.com/pkg/errors"
 	"github.com/vdobler/ht/errorlist"
 	"github.com/vishvananda/netlink"
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	networkutil "github.com/openyurtio/raven/pkg/networkengine/util"
@@ -76,14 +76,14 @@ type wireguard struct {
 
 	connections map[string]*vpndriver.Connection
 	nodeName    types.NodeName
-	ravenClient *ravenclientset.Clientset
+	ravenClient client.Client
 }
 
 func New(cfg *config.Config) (vpndriver.Driver, error) {
 	return &wireguard{
 		connections: make(map[string]*vpndriver.Connection),
 		nodeName:    types.NodeName(cfg.NodeName),
-		ravenClient: cfg.RavenClient,
+		ravenClient: cfg.Manager.GetClient(),
 	}, nil
 }
 
@@ -395,7 +395,10 @@ func (w *wireguard) removePeer(key *wgtypes.Key) error {
 func (w *wireguard) configGatewayPublicKey(gwName string, nodeName string) error {
 	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		// get localGateway from api server
-		apiGw, err := w.ravenClient.RavenV1alpha1().Gateways().Get(context.Background(), gwName, v1.GetOptions{})
+		var apiGw v1alpha1.Gateway
+		err := w.ravenClient.Get(context.Background(), client.ObjectKey{
+			Name: gwName,
+		}, &apiGw)
 		if err != nil {
 			return err
 		}
@@ -405,7 +408,7 @@ func (w *wireguard) configGatewayPublicKey(gwName string, nodeName string) error
 					apiGw.Spec.Endpoints[k].Config = make(map[string]string)
 				}
 				apiGw.Spec.Endpoints[k].Config[PublicKey] = w.privateKey.PublicKey().String()
-				_, err = w.ravenClient.RavenV1alpha1().Gateways().Update(context.Background(), apiGw, v1.UpdateOptions{})
+				err = w.ravenClient.Update(context.Background(), &apiGw)
 				return err
 			}
 		}

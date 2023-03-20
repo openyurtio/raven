@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"os"
 
-	ravenclientset "github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/client/clientset/versioned"
+	"github.com/openyurtio/openyurt/pkg/apis/raven/v1alpha1"
 	"github.com/spf13/pflag"
+	"k8s.io/apimachinery/pkg/runtime"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog/v2"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/pkg/networkengine/routedriver/vxlan"
@@ -59,7 +63,10 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 	}
 	cfg = restclient.AddUserAgent(cfg, "raven-agent")
 	c.Kubeconfig = cfg
-	c.RavenClient = ravenclientset.NewForConfigOrDie(cfg)
+	c.Manager, err = newMgr(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create manager: %s", err)
+	}
 	if c.VPNDriver == "" {
 		c.VPNDriver = libreswan.DriverName
 	}
@@ -67,4 +74,17 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 		c.RouteDriver = vxlan.DriverName
 	}
 	return c, err
+}
+
+func newMgr(cfg *restclient.Config) (manager.Manager, error) {
+	scheme := runtime.NewScheme()
+	_ = v1alpha1.AddToScheme(scheme)
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+		Scheme: scheme,
+	})
+	if err != nil {
+		klog.ErrorS(err, "failed to new manager for raven agent controller")
+		return nil, err
+	}
+	return mgr, nil
 }

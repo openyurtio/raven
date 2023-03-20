@@ -17,6 +17,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -30,7 +31,7 @@ import (
 )
 
 // NewRavenAgentCommand creates a new raven agent command
-func NewRavenAgentCommand(stopCh <-chan struct{}) *cobra.Command {
+func NewRavenAgentCommand(ctx context.Context) *cobra.Command {
 	agentOptions := &options.AgentOptions{}
 	cmd := &cobra.Command{
 		Short: fmt.Sprintf("Launch %s", "raven-agent"),
@@ -42,7 +43,7 @@ func NewRavenAgentCommand(stopCh <-chan struct{}) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := Run(cfg.Complete(), stopCh); err != nil {
+			if err := Run(ctx, cfg.Complete()); err != nil {
 				return err
 			}
 			return nil
@@ -55,7 +56,7 @@ func NewRavenAgentCommand(stopCh <-chan struct{}) *cobra.Command {
 }
 
 // Run starts the raven-agent
-func Run(cfg *config.CompletedConfig, stopCh <-chan struct{}) error {
+func Run(ctx context.Context, cfg *config.CompletedConfig) error {
 	routeDriver, err := routedriver.New(cfg.RouteDriver, cfg.Config)
 	if err != nil {
 		return fmt.Errorf("fail to create route driver: %s, %s", cfg.RouteDriver, err)
@@ -75,12 +76,12 @@ func Run(cfg *config.CompletedConfig, stopCh <-chan struct{}) error {
 	}
 	klog.Infof("VPN driver %s initialized", cfg.VPNDriver)
 	// start network engine controller
-	ec, err := k8s.NewEngineController(cfg.NodeName, cfg.ForwardNodeIP, cfg.RavenClient, routeDriver, vpnDriver)
+	ec, err := k8s.NewEngineController(cfg.NodeName, cfg.ForwardNodeIP, routeDriver, cfg.Manager, vpnDriver)
 	if err != nil {
 		return fmt.Errorf("could not create network engine controller: %s", err)
 	}
-	ec.Start(stopCh)
-	<-stopCh
+	ec.Start(ctx)
+	<-ctx.Done()
 	err = routeDriver.Cleanup()
 	if err != nil {
 		klog.Errorf("route driver fail to cleanup: %s", err)

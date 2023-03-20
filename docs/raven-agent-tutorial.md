@@ -2,7 +2,7 @@
 
 This document introduces how to install raven and use raven to enhance edge-edge and edge-cloud network communication in an edge cluster.
 
-Suppose you have an edge kubernetes cluster with nodes in different physical regions, and already deploy the raven-controller-manager in this cluster, the details of raven-controller-manager are in [here](https://github.com/openyurtio/raven-controller-manager/blob/main/README.md).
+Suppose you have an edge kubernetes cluster with nodes in different physical regions, and already deploy the yurt-manager in this cluster, the details of yurt-manager are in [here](https://github.com/openyurtio/openyurt/blob/master/cmd/yurt-manager/README.md).
 
 ## Label nodes in different physical regions
 
@@ -19,7 +19,7 @@ wlcb-node1   Ready    <none>   20d   v1.16.2   10.48.115.11
 wlcb-node2   Ready    <none>   20d   v1.16.2   10.48.115.12    
 ```
 
-We use a [Gateway](https://github.com/openyurtio/raven-controller-manager/blob/main/pkg/ravencontroller/apis/raven/v1alpha1/gateway_types.go) CR to manage nodes in different physical regions, and label nodes to indicate which `Gateway` these nodes are managed by.
+We use a [Gateway](https://github.com/openyurtio/openyurt/blob/raven-controller-manager/pkg/apis/raven/v1alpha1/gateway_types.go) CR to manage nodes in different physical regions, and label nodes to indicate which `Gateway` these nodes are managed by.
 
 For example, We label nodes in region `cn-huhehaote` with value `gw-hhht`, indicating that these nodes are managed by the `gw-hhht` gateway.
 

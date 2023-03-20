@@ -24,7 +24,7 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/apis/raven/v1alpha1"
+	"github.com/openyurtio/openyurt/pkg/apis/raven/v1alpha1"
 	"github.com/vdobler/ht/errorlist"
 	"github.com/vishvananda/netlink"
 	"k8s.io/klog/v2"

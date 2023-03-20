@@ -1,5 +1,5 @@
 # Build the manager binary
-FROM --platform=${BUILDPLATFORM} golang:1.18 as builder
+FROM golang:1.18 as builder
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
@@ -14,7 +14,7 @@ COPY pkg/ pkg/
 COPY cmd/ cmd/
 
 ARG TARGETOS
-ARG ARGETARCH
+ARG TARGETARCH
 
 # Build
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=on go build -a -o agent cmd/agent/main.go

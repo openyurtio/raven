@@ -23,18 +23,19 @@ import (
 	"time"
 
 	"github.com/EvilSuperstars/go-cidrman"
-	"github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/apis/raven/v1alpha1"
-	ravenclientset "github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/client/clientset/versioned"
-	raveninformer "github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/client/informers/externalversions"
-	ravenlister "github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/client/listers/raven/v1alpha1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
+	"github.com/openyurtio/openyurt/pkg/apis/raven/v1alpha1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/openyurtio/raven/pkg/networkengine/routedriver"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
@@ -54,49 +55,51 @@ type EngineController struct {
 	// lastSeenNetwork tracks the last seen Network.
 	lastSeenNetwork *types.Network
 
-	ravenClient   *ravenclientset.Clientset
-	ravenInformer raveninformer.SharedInformerFactory
+	manager manager.Manager
 
-	gatewayLister ravenlister.GatewayLister
-	hasSynced     func() bool
-	queue         workqueue.RateLimitingInterface
+	ravenClient client.Client
+	queue       workqueue.RateLimitingInterface
 
 	routeDriver routedriver.Driver
 	vpnDriver   vpndriver.Driver
 }
 
-func NewEngineController(nodeName string, forwardNodeIP bool, ravenClient *ravenclientset.Clientset,
-	routeDriver routedriver.Driver, vpnDriver vpndriver.Driver) (*EngineController, error) {
+func NewEngineController(nodeName string, forwardNodeIP bool, routeDriver routedriver.Driver, manager manager.Manager,
+	vpnDriver vpndriver.Driver) (*EngineController, error) {
 	ctr := &EngineController{
 		nodeName:      nodeName,
 		forwardNodeIP: forwardNodeIP,
-		ravenClient:   ravenClient,
 		queue:         workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
 		routeDriver:   routeDriver,
+		manager:       manager,
 		vpnDriver:     vpnDriver,
 	}
 
-	ravenInformer := raveninformer.NewSharedInformerFactory(ctr.ravenClient, 24*time.Hour)
-	ravenInformer.Raven().V1alpha1().Gateways().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    ctr.addGateway,
-		UpdateFunc: ctr.updateGateway,
-		DeleteFunc: ctr.deleteGateway,
-	})
-	ctr.ravenInformer = ravenInformer
-	ctr.gatewayLister = ravenInformer.Raven().V1alpha1().Gateways().Lister()
-	ctr.hasSynced = ravenInformer.Raven().V1alpha1().Gateways().Informer().HasSynced
+	err := ctrl.NewControllerManagedBy(ctr.manager).
+		For(&v1alpha1.Gateway{}, builder.WithPredicates(predicate.Funcs{
+			CreateFunc: ctr.addGateway,
+			UpdateFunc: ctr.updateGateway,
+			DeleteFunc: ctr.deleteGateway,
+		})).
+		Complete(reconcile.Func(func(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+			return reconcile.Result{}, nil
+		}))
+	if err != nil {
+		klog.ErrorS(err, "failed to new raven agent controller with manager")
+	}
+	ctr.ravenClient = ctr.manager.GetClient()
 
 	return ctr, nil
 }
 
-func (c *EngineController) Start(stopCh <-chan struct{}) {
+func (c *EngineController) Start(ctx context.Context) {
 	defer utilruntime.HandleCrash()
-	c.ravenInformer.Start(stopCh)
-	if !cache.WaitForCacheSync(stopCh, c.hasSynced) {
-		klog.Errorf("failed to wait for cache sync")
-		return
-	}
-	go wait.Until(c.worker, time.Second, stopCh)
+	go func() {
+		if err := c.manager.Start(ctx); err != nil {
+			klog.ErrorS(err, "failed to start engine controller")
+		}
+	}()
+	go wait.Until(c.worker, time.Second, ctx.Done())
 	klog.Info("engine controller successfully start")
 }
 
@@ -140,7 +143,8 @@ func (c *EngineController) getMergedSubnets(nodeInfo []v1alpha1.NodeInfo) []stri
 
 // sync syncs full state according to the gateway list.
 func (c *EngineController) sync() error {
-	gws, err := c.gatewayLister.List(labels.Everything())
+	var gws v1alpha1.GatewayList
+	err := c.ravenClient.List(context.Background(), &gws)
 	if err != nil {
 		return err
 	}
@@ -153,8 +157,9 @@ func (c *EngineController) sync() error {
 	}
 	c.nodeInfos = make(map[types.NodeName]*v1alpha1.NodeInfo)
 
-	for _, gw := range gws {
+	for i := range gws.Items {
 		// try to update public IP if empty.
+		gw := &gws.Items[i]
 		if ep := gw.Status.ActiveEndpoint; ep != nil && ep.PublicIP == "" {
 			err := c.configGatewayPublicIP(gw)
 			if err != nil {
@@ -167,7 +172,8 @@ func (c *EngineController) sync() error {
 		}
 		c.syncNodeInfo(gw.Status.Nodes)
 	}
-	for _, gw := range gws {
+	for i := range gws.Items {
+		gw := &gws.Items[i]
 		if !c.shouldHandleGateway(gw) {
 			continue
 		}
@@ -281,14 +287,17 @@ func (c *EngineController) configGatewayPublicIP(gateway *v1alpha1.Gateway) erro
 	// retry to update public ip of localGateway
 	err = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		// get localGateway from api server
-		apiGw, err := c.ravenClient.RavenV1alpha1().Gateways().Get(context.Background(), gateway.Name, v1.GetOptions{})
+		var apiGw v1alpha1.Gateway
+		err := c.ravenClient.Get(context.Background(), client.ObjectKey{
+			Name: gateway.Name,
+		}, &apiGw)
 		if err != nil {
 			return err
 		}
 		for k, v := range apiGw.Spec.Endpoints {
 			if v.NodeName == c.nodeName {
 				apiGw.Spec.Endpoints[k].PublicIP = publicIP
-				_, err = c.ravenClient.RavenV1alpha1().Gateways().Update(context.Background(), apiGw, v1.UpdateOptions{})
+				err = c.ravenClient.Update(context.Background(), &apiGw)
 				return err
 			}
 		}
@@ -297,37 +306,35 @@ func (c *EngineController) configGatewayPublicIP(gateway *v1alpha1.Gateway) erro
 	return err
 }
 
-func (c *EngineController) addGateway(obj interface{}) {
-	gw := obj.(*v1alpha1.Gateway)
-	klog.V(4).InfoS("adding gateway", "gateway", klog.KObj(gw))
-	c.enqueue(gw)
+func (c *EngineController) addGateway(e event.CreateEvent) bool {
+	gw, ok := e.Object.(*v1alpha1.Gateway)
+	if ok {
+		klog.V(4).InfoS("adding gateway", "gateway", klog.KObj(gw))
+		c.enqueue(gw)
+	}
+	return ok
 }
 
-func (c *EngineController) updateGateway(oldObj interface{}, newObj interface{}) {
-	oldGw := oldObj.(*v1alpha1.Gateway)
-	newGw := newObj.(*v1alpha1.Gateway)
-	if oldGw.ResourceVersion == newGw.ResourceVersion {
+func (c *EngineController) updateGateway(e event.UpdateEvent) bool {
+	oldGw, ok1 := e.ObjectOld.(*v1alpha1.Gateway)
+	newGw, ok2 := e.ObjectNew.(*v1alpha1.Gateway)
+	update := false
+	if ok1 && ok2 {
+		if oldGw.ResourceVersion != newGw.ResourceVersion {
+			update = true
+			klog.V(4).InfoS("updating gateway", "gateway", klog.KObj(newGw))
+			c.enqueue(newGw)
+		}
 		klog.InfoS("skip handle update gateway", "gateway", klog.KObj(newGw))
-		return
 	}
-	klog.V(4).InfoS("updating gateway", "gateway", klog.KObj(newGw))
-	c.enqueue(newGw)
+	return update
 }
 
-func (c *EngineController) deleteGateway(obj interface{}) {
-	gw, ok := obj.(*v1alpha1.Gateway)
-	if !ok {
-		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
-		if !ok {
-			klog.Errorf("couldn't get object from tombstone %#v", obj)
-			return
-		}
-		gw, ok = tombstone.Obj.(*v1alpha1.Gateway)
-		if !ok {
-			klog.Errorf("tombstone contained object that is not a Gateway %#v", obj)
-			return
-		}
+func (c *EngineController) deleteGateway(e event.DeleteEvent) bool {
+	gw, ok := e.Object.(*v1alpha1.Gateway)
+	if ok {
+		klog.InfoS("deleting gateway", "gateway", klog.KObj(gw))
+		c.enqueue(gw)
 	}
-	klog.InfoS("deleting gateway", "gateway", klog.KObj(gw))
-	c.enqueue(gw)
+	return ok
 }

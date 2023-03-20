@@ -20,7 +20,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/openyurtio/raven-controller-manager/pkg/ravencontroller/apis/raven/v1alpha1"
+	"github.com/openyurtio/openyurt/pkg/apis/raven/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/vishvananda/netlink"
 
