@@ -28,14 +28,14 @@ git config --global user.email "openyurt-bot@openyurt.io"
 git config --global user.name "openyurt-bot"
 git clone --single-branch --depth 1 git@github.com:openyurtio/openyurt-helm.git openyurt-helm
 
-echo "clear openyurt-helm charts/raven"
+echo "clear openyurt-helm charts/raven-agent"
 
-if [ -d "openyurt-helm/charts/raven" ]
+if [ -d "openyurt-helm/charts/raven-agent" ]
 then
-    echo "charts raven exists, remove it"
-    rm -r openyurt-helm/charts/raven/*
+    echo "charts raven-agent exists, remove it"
+    rm -r openyurt-helm/charts/raven-agent/*
 else
-    mkdir -p openyurt-helm/charts/raven
+    mkdir -p openyurt-helm/charts/raven-agent
 fi
 
 echo "copy folder raven/charts to openyurt-helm/charts"
@@ -51,7 +51,7 @@ if [ -z "$(git status --porcelain)" ]; then
   echo "nothing need to push, finished!"
 else
   git add .
-  git commit -m "align with raven charts $VERSION from commit $COMMIT_ID"
+  git commit -m "align with raven-agent charts $VERSION from commit $COMMIT_ID"
   git tag "$VERSION"
   git push origin main
 fi
