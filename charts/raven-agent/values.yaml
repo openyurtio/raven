@@ -60,8 +60,14 @@ containerEnv:
         configMapKeyRef:
           key: vpn-driver
           name: raven-agent-config
+    - name: FORWARD_NODE_IP
+      valueFrom:
+        configMapKeyRef:
+          key: forward-node-ip
+          name: raven-agent-config
 vpn:
   driver: libreswan
+  forwardNodeIP: false
   # raven-agent requires a unique vpn psk
   # You can generate one with the command:
   # 'openssl rand -hex 64'
