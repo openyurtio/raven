@@ -129,13 +129,6 @@ func (c *EngineController) getMergedSubnets(nodeInfo []v1alpha1.NodeInfo) []stri
 	subnets := make([]string, 0)
 	for _, n := range nodeInfo {
 		subnets = append(subnets, n.Subnets...)
-		if c.forwardNodeIP {
-			nodeSubnet := net.IPNet{
-				IP:   net.ParseIP(n.PrivateIP),
-				Mask: []byte{0xff, 0xff, 0xff, 0xff},
-			}
-			subnets = append(subnets, nodeSubnet.String())
-		}
 	}
 	subnets, _ = cidrman.MergeCIDRs(subnets)
 	return subnets
@@ -205,7 +198,20 @@ func (c *EngineController) syncNodeInfo(nodes []v1alpha1.NodeInfo) {
 	}
 }
 
+func (c *EngineController) appendNodeIP(gw *v1alpha1.Gateway) {
+	for i := range gw.Status.Nodes {
+		nodeSubnet := net.IPNet{
+			IP:   net.ParseIP(gw.Status.Nodes[i].PrivateIP),
+			Mask: []byte{0xff, 0xff, 0xff, 0xff},
+		}
+		gw.Status.Nodes[i].Subnets = append(gw.Status.Nodes[i].Subnets, nodeSubnet.String())
+	}
+}
+
 func (c *EngineController) syncGateway(gw *v1alpha1.Gateway) {
+	if c.forwardNodeIP {
+		c.appendNodeIP(gw)
+	}
 	aep := gw.Status.ActiveEndpoint
 	subnets := c.getMergedSubnets(gw.Status.Nodes)
 	cfg := make(map[string]string)
