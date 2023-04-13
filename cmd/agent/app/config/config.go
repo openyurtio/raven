@@ -23,12 +23,13 @@ import (
 
 // Config is the main context object for raven agent
 type Config struct {
-	NodeName      string
-	Kubeconfig    *rest.Config
-	Manager       manager.Manager
-	VPNDriver     string
-	RouteDriver   string
-	ForwardNodeIP bool
+	NodeName           string
+	Kubeconfig         *rest.Config
+	Manager            manager.Manager
+	VPNDriver          string
+	RouteDriver        string
+	ForwardNodeIP      bool
+	MetricsBindAddress string
 }
 
 type completedConfig struct {
