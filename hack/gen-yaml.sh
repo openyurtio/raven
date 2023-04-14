@@ -21,6 +21,7 @@ gen_yaml() {
     local IMG=$1
     local VPN_DRIVER=$2
     local FORWARD_NODE_IP=$3
+    local METRIC_BIND_ADDR=$4
     local OUT_YAML_DIR=${YURT_ROOT}/_output/yamls
     local BUILD_YAML_DIR=${OUT_YAML_DIR}/build
     [ -f "${BUILD_YAML_DIR}" ] || mkdir -p "${BUILD_YAML_DIR}"
@@ -36,6 +37,7 @@ gen_yaml() {
     [ -f "${BUILD_YAML_DIR}"/default/psk.env ] || echo "vpn-connection-psk=$(openssl rand -hex 64)" > "${BUILD_YAML_DIR}"/default/psk.env
     [ -f "${BUILD_YAML_DIR}"/default/config.env ] || echo "vpn-driver=${VPN_DRIVER}" > "${BUILD_YAML_DIR}"/default/config.env
     echo "forward-node-ip=${FORWARD_NODE_IP}" >> "${BUILD_YAML_DIR}"/default/config.env
+    echo "metric-bind-addr=${METRIC_BIND_ADDR}" >> "${BUILD_YAML_DIR}"/default/config.env
     kustomize build "${BUILD_YAML_DIR}"/default > "${OUT_YAML_DIR}"/raven-agent.yaml
     rm -Rf "${BUILD_YAML_DIR}"
 }
