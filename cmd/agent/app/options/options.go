@@ -86,7 +86,7 @@ func newMgr(cfg *restclient.Config, metricsBindAddress string) (manager.Manager,
 		Scheme:             scheme,
 		MetricsBindAddress: metricsBindAddress,
 	}
-	klog.Infof("[+++] opt %v", opt)
+
 	mgr, err := ctrl.NewManager(cfg, opt)
 	if err != nil {
 		klog.ErrorS(err, "failed to new manager for raven agent controller")
