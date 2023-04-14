@@ -65,6 +65,11 @@ containerEnv:
         configMapKeyRef:
           key: forward-node-ip
           name: raven-agent-config
+    - name: METRIC_BIND_ADDR
+      valueFrom:
+        configMapKeyRef:
+          key: metric-bind-addr
+          name: raven-agent-config
 vpn:
   driver: libreswan
   forwardNodeIP: false
@@ -74,5 +79,6 @@ vpn:
   # Pass it to helm with '--set vpn.psk=`openssl rand -hex 64`'
   # IMPORTANT: You should NOT use the example psk for a production deployment!
   psk: OPENYURT-RAVEN-AGENT-VPN-PSK
+  metricBindAddr: ":8080"
 rollingUpdate:
   maxUnavailable: 5%

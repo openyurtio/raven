@@ -43,3 +43,8 @@ spec:
                 configMapKeyRef:
                   name: agent-config
                   key: forward-node-ip
+            - name: METRIC_BIND_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: metric-bind-addr
