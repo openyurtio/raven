@@ -166,6 +166,24 @@ func Test_applyRoutes(t *testing.T) {
 	}
 	for _, v := range tt {
 		t.Run(v.name, func(t *testing.T) {
+			current := make(map[string]*netlink.Route)
+			for _, r := range v.current {
+				current[networkutil.RouteKey(r)] = r
+			}
+			v.current = current
+
+			desired := make(map[string]*netlink.Route)
+			for _, r := range v.desired {
+				desired[networkutil.RouteKey(r)] = r
+			}
+			v.desired = desired
+
+			expected := make(map[string]*netlink.Route)
+			for _, r := range v.expected {
+				expected[networkutil.RouteKey(r)] = r
+			}
+			v.expected = expected
+
 			actual := make(map[string]*netlink.Route)
 			for k := range v.current {
 				actual[k] = v.current[k]
@@ -297,6 +315,24 @@ func Test_applyRule(t *testing.T) {
 	}
 	for _, v := range tt {
 		t.Run(v.name, func(t *testing.T) {
+			current := make(map[string]*netlink.Rule)
+			for _, r := range v.current {
+				current[networkutil.RuleKey(r)] = r
+			}
+			v.current = current
+
+			desired := make(map[string]*netlink.Rule)
+			for _, r := range v.desired {
+				desired[networkutil.RuleKey(r)] = r
+			}
+			v.desired = desired
+
+			expected := make(map[string]*netlink.Rule)
+			for _, r := range v.expected {
+				expected[networkutil.RuleKey(r)] = r
+			}
+			v.expected = expected
+
 			actual := make(map[string]*netlink.Rule)
 			for k := range v.current {
 				actual[k] = v.current[k]

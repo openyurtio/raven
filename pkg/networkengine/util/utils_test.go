@@ -20,7 +20,6 @@
 package networkutil
 
 import (
-	"fmt"
 	"reflect"
 	"testing"
 
@@ -84,9 +83,8 @@ func TestRouteKey(t *testing.T) {
 		expect string
 	}{
 		{
-			"normal",
-			route1,
-			fmt.Sprintf("%s-%d", route1.Dst, route1.Table),
+			name:  "normal",
+			route: route1,
 		},
 	}
 
@@ -96,6 +94,7 @@ func TestRouteKey(t *testing.T) {
 			t.Parallel()
 			t.Logf("\tTestCase: %s", tt.name)
 
+			tt.expect = tt.route.String()
 			get := RouteKey(tt.route)
 
 			if !reflect.DeepEqual(get, tt.expect) {
@@ -113,8 +112,8 @@ func TestRuleKey(t *testing.T) {
 		expect string
 	}{
 		{
-			"nil",
-			&netlink.Rule{
+			name: "nil",
+			rule: &netlink.Rule{
 				SuppressIfgroup:   -1,
 				SuppressPrefixlen: -1,
 				Priority:          -1,
@@ -123,11 +122,10 @@ func TestRuleKey(t *testing.T) {
 				Goto:              -1,
 				Flow:              -1,
 			},
-			"0.0.0.0/0",
 		},
 		{
-			"normal",
-			&netlink.Rule{
+			name: "normal",
+			rule: &netlink.Rule{
 				SuppressIfgroup:   -1,
 				SuppressPrefixlen: -1,
 				Priority:          -1,
@@ -137,7 +135,6 @@ func TestRuleKey(t *testing.T) {
 				Flow:              -1,
 				Src:               netlink.NewIPNet([]byte{0xC0, 0xA8, 0x00, 0x01}),
 			},
-			"192.168.0.1/32",
 		},
 	}
 
@@ -146,7 +143,7 @@ func TestRuleKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			t.Logf("\tTestCase: %s", tt.name)
-
+			tt.expect = tt.rule.String()
 			get := RuleKey(tt.rule)
 
 			if !reflect.DeepEqual(get, tt.expect) {
