@@ -24,9 +24,14 @@ import (
 	"net"
 
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 	"k8s.io/klog/v2"
 
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
+)
+
+const (
+	resetMark = 0x0
 )
 
 func ensureVxlanLink(vxlan netlink.Vxlan, vtepIP net.IP) (netlink.Link, error) {
@@ -74,7 +79,152 @@ func ensureVxlanLink(vxlan netlink.Vxlan, vtepIP net.IP) (netlink.Link, error) {
 		return nil, fmt.Errorf("error add vxlan addr: %v", err)
 	}
 
+	// tc qdisc add dev raven0 clsact
+	err = ensureClsActQdsic(vxLink)
+	if err != nil {
+		return nil, fmt.Errorf("error ensure qdisc: %v", err)
+	}
+
+	// tc filter add dev raven0 egress protocol ip prio 1 matchall action skbedit mark 0x0
+	err = ensureSkbEditFilter(vxLink)
+	if err != nil {
+		return nil, fmt.Errorf("error ensure filter: %v", err)
+	}
+
 	return vxLink, nil
+}
+
+func ensureClsActQdsic(link netlink.Link) error {
+	qds, err := netlink.QdiscList(link)
+	if err != nil {
+		return fmt.Errorf("list qdisc for dev %s error, %w", link.Attrs().Name, err)
+	}
+	for _, q := range qds {
+		if q.Type() == "clsact" {
+			return nil
+		}
+	}
+	qdisc := &netlink.GenericQdisc{
+		QdiscAttrs: netlink.QdiscAttrs{
+			LinkIndex: link.Attrs().Index,
+			Parent:    netlink.HANDLE_CLSACT,
+			Handle:    netlink.HANDLE_CLSACT & 0xffff0000,
+		},
+		QdiscType: "clsact",
+	}
+	if err := netlink.QdiscReplace(qdisc); err != nil {
+		return fmt.Errorf("replace clsact qdisc for dev %s error, %w", link.Attrs().Name, err)
+	}
+	return nil
+}
+
+func deleteClsActQdsic(link netlink.Link) error {
+	qds, err := netlink.QdiscList(link)
+	if err != nil {
+		return fmt.Errorf("list qdisc for dev %s error, %w", link.Attrs().Name, err)
+	}
+	var qdisc netlink.Qdisc
+	for _, q := range qds {
+		if q.Type() == "clsact" {
+			qdisc = q
+			break
+		}
+	}
+	if qdisc != nil {
+		err = netlink.QdiscDel(qdisc)
+		if err != nil {
+			return fmt.Errorf("error delete qdisc: %s", err)
+		}
+	}
+	return nil
+}
+
+func ensureSkbEditFilter(link netlink.Link) error {
+	filters, err := netlink.FilterList(link, netlink.HANDLE_MIN_EGRESS)
+	if err != nil {
+		return fmt.Errorf("list egress filter for %s error, %w", link.Attrs().Name, err)
+	}
+
+	for _, f := range filters {
+		if isMatch(f) {
+			return nil
+		}
+	}
+
+	skbedit := netlink.NewSkbEditAction()
+	mark := uint32(resetMark)
+	skbedit.Mark = &mark
+	match := &netlink.MatchAll{
+		FilterAttrs: netlink.FilterAttrs{
+			LinkIndex: link.Attrs().Index,
+			Parent:    netlink.HANDLE_MIN_EGRESS,
+			Priority:  20000,
+			Protocol:  unix.ETH_P_IP,
+		},
+		Actions: []netlink.Action{
+			skbedit,
+		},
+	}
+
+	return netlink.FilterReplace(match)
+}
+
+func deleteSkbEditFilter(link netlink.Link) error {
+	filters, err := netlink.FilterList(link, netlink.HANDLE_MIN_EGRESS)
+	if err != nil {
+		return fmt.Errorf("list egress filter for %s error, %w", link.Attrs().Name, err)
+	}
+	for _, f := range filters {
+		_ = netlink.FilterDel(f)
+	}
+	return nil
+}
+
+func isMatch(filter netlink.Filter) bool {
+	match, ok := filter.(*netlink.MatchAll)
+	if !ok {
+		return false
+	}
+	if match.Parent != netlink.HANDLE_MIN_EGRESS || match.Protocol != unix.ETH_P_IP {
+		return false
+	}
+	if len(match.Actions) != 1 {
+		return false
+	}
+	action, ok := match.Actions[0].(*netlink.SkbEditAction)
+	if !ok {
+		return false
+	}
+	if *action.Mark != resetMark {
+		return false
+	}
+	return true
+}
+
+func deleteVxlanLink(linkName string) error {
+	vxLink, err := netlink.LinkByName(linkName)
+	if err != nil {
+		if _, ok := err.(netlink.LinkNotFoundError); ok {
+			return nil
+		}
+		return fmt.Errorf("error finding vxlan link: %s", err)
+	}
+
+	err = deleteSkbEditFilter(vxLink)
+	if err != nil {
+		return fmt.Errorf("error deleting skbedit filter: %s", err)
+	}
+	err = deleteClsActQdsic(vxLink)
+	if err != nil {
+		return fmt.Errorf("error deleting clsact qdsic: %s", err)
+	}
+	err = netlink.LinkDel(vxLink)
+	if err != nil {
+		if _, ok := err.(netlink.LinkNotFoundError); !ok {
+			return fmt.Errorf("error deleting vxlan link: %s", err)
+		}
+	}
+	return nil
 }
 
 func isVxlanConfigChanged(newLink, currentLink netlink.Link) bool {

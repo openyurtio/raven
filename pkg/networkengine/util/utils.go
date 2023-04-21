@@ -20,20 +20,22 @@
 package networkutil
 
 import (
-	"bytes"
 	"fmt"
 	"net"
 	"syscall"
 
+	"github.com/gonetx/ipset"
 	"github.com/vdobler/ht/errorlist"
 	"github.com/vishvananda/netlink"
 	"k8s.io/klog/v2"
 
+	ipsetutil "github.com/openyurtio/raven/pkg/networkengine/util/ipset"
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
 )
 
 var (
-	AllZeroMAC = net.HardwareAddr{0, 0, 0, 0, 0, 0}
+	AllZeroMAC     = net.HardwareAddr{0, 0, 0, 0, 0, 0}
+	AllZeroAddress = "0.0.0.0/0"
 )
 
 func NewRavenRule(rulePriority int, routeTableID int) *netlink.Rule {
@@ -45,16 +47,11 @@ func NewRavenRule(rulePriority int, routeTableID int) *netlink.Rule {
 }
 
 func RouteKey(route *netlink.Route) string {
-	return fmt.Sprintf("%s-%d", route.Dst, route.Table)
+	return route.String()
 }
 
 func RuleKey(rule *netlink.Rule) string {
-	src := "0.0.0.0/0"
-	srcIPNet := rule.Src
-	if srcIPNet != nil {
-		src = srcIPNet.String()
-	}
-	return src
+	return rule.String()
 }
 
 func ListRulesOnNode(routeTableID int) (map[string]*netlink.Rule, error) {
@@ -85,6 +82,18 @@ func ListRoutesOnNode(routeTableID int) (map[string]*netlink.Route, error) {
 	ro := make(map[string]*netlink.Route)
 	for k, v := range routes {
 		ro[RouteKey(&v)] = &routes[k]
+	}
+	return ro, nil
+}
+
+func ListIPSetOnNode(set ipsetutil.IPSetInterface) (map[string]bool, error) {
+	info, err := set.List()
+	if err != nil {
+		return nil, err
+	}
+	ro := make(map[string]bool)
+	for _, v := range info.Entries {
+		ro[v] = true
 	}
 	return ro, nil
 }
@@ -127,7 +136,7 @@ func ApplyRoutes(current, desired map[string]*netlink.Route) (err error) {
 			continue
 		}
 		delete(current, k)
-		if !routeEqual(*ro, *v) {
+		if !ro.Equal(*v) {
 			klog.InfoS("replacing route", "dst", v.Dst, "via", v.Gw, "src", v.Src, "table", v.Table)
 			err = netlinkutil.RouteReplace(v)
 			errList = errList.Append(err)
@@ -137,6 +146,30 @@ func ApplyRoutes(current, desired map[string]*netlink.Route) (err error) {
 	for _, v := range current {
 		klog.InfoS("deleting route", "dst", v.Dst.String(), "via", v.Gw.String())
 		err = netlinkutil.RouteDel(v)
+		errList = errList.Append(err)
+	}
+	return errList.AsError()
+}
+
+func ApplyIPSet(set ipsetutil.IPSetInterface, current, desired map[string]bool) (err error) {
+	if klog.V(5).Enabled() {
+		klog.InfoS("applying ipset entry", "current", current, "desired", desired)
+	}
+	errList := errorlist.List{}
+	for k := range desired {
+		_, ok := current[k]
+		if !ok {
+			klog.InfoS("adding entry", "entry", k)
+			err = set.Add(k, ipset.Exist(true))
+			errList = errList.Append(err)
+			continue
+		}
+		delete(current, k)
+	}
+	// remove unwanted entries
+	for k := range current {
+		klog.InfoS("deleting ipset entry", "entry", k)
+		err = set.Del(k)
 		errList = errList.Append(err)
 	}
 	return errList.AsError()
@@ -208,13 +241,4 @@ func CleanRulesOnNode(routeTableID int) error {
 		}
 	}
 	return errList.AsError()
-}
-
-func routeEqual(x, y netlink.Route) bool {
-	if x.Dst.IP.Equal(y.Dst.IP) && x.Gw.Equal(y.Gw) &&
-		bytes.Equal(x.Dst.Mask, y.Dst.Mask) &&
-		x.LinkIndex == y.LinkIndex {
-		return true
-	}
-	return false
 }

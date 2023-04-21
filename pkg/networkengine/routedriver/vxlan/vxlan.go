@@ -32,7 +32,8 @@ import (
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/pkg/networkengine/routedriver"
 	networkutil "github.com/openyurtio/raven/pkg/networkengine/util"
-	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
+	ipsetutil "github.com/openyurtio/raven/pkg/networkengine/util/ipset"
+	iptablesutil "github.com/openyurtio/raven/pkg/networkengine/util/iptables"
 	"github.com/openyurtio/raven/pkg/types"
 )
 
@@ -47,6 +48,15 @@ const (
 	vxlanGwPrefix = 240
 
 	DriverName = "vxlan"
+
+	ravenMark = 0x40
+
+	ravenMarkSet = "raven-mark-set"
+)
+
+var (
+	nonGatewayChainRuleSpec = []string{"-m", "set", "--match-set", ravenMarkSet, "dst", "-j", "MARK", "--set-mark", fmt.Sprintf("%d", ravenMark)}
+	gatewayChainRuleSpec    = []string{"-m", "set", "--match-set", ravenMarkSet, "src", "-j", "MARK", "--set-mark", fmt.Sprintf("%d", ravenMark)}
 )
 
 func init() {
@@ -56,6 +66,9 @@ func init() {
 type vxlan struct {
 	vxlanIface netlink.Link
 	nodeName   types.NodeName
+
+	iptables iptablesutil.IPTablesInterface
+	ipset    ipsetutil.IPSetInterface
 }
 
 func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error)) (err error) {
@@ -80,6 +93,20 @@ func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error
 	// The key is netlink.Neigh.IP
 	var desiredFDBs, currentFDBs map[string]*netlink.Neigh
 
+	// The desired and current ipset entries calculated from given network.
+	// The key is ip set entry
+	var desiredSet, currentSet map[string]bool
+
+	vx.ipset, err = ipsetutil.New(ravenMarkSet)
+	if err != nil {
+		return fmt.Errorf("error create ip set: %s", err)
+	}
+
+	err = vx.ensureRavenMarkChain()
+	if err != nil {
+		return fmt.Errorf("error ensure raven mark chain: %s", err)
+	}
+
 	err = vx.ensureVxlanLink(network, vpnDriverMTUFn)
 	if err != nil {
 		return fmt.Errorf("error ensuring vxlan: %s", err)
@@ -98,14 +125,39 @@ func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error
 	if err != nil {
 		return fmt.Errorf("error listing fdb on node: %s", err)
 	}
+
+	currentSet, err = networkutil.ListIPSetOnNode(vx.ipset)
+	if err != nil {
+		return fmt.Errorf("error listing ip set on node: %s", err)
+	}
+
+	desiredSet = vx.calIPSetOnNode(network)
+	desiredRules = vx.calRulesOnNode()
+
 	if vx.isGatewayRole(network) {
 		desiredRoutes = vx.calRouteOnGateway(network)
-		desiredRules = vx.calRulesOnGateway(network)
 		desiredFDBs = vx.calFDBOnGateway(network)
+
+		err = vx.deleteChainRuleOnNode(nonGatewayChainRuleSpec)
+		if err != nil {
+			return fmt.Errorf("error deleting non gateway chain rule: %s", err)
+		}
+		err = vx.addChainRuleOnNode(gatewayChainRuleSpec)
+		if err != nil {
+			return fmt.Errorf("error adding gateway chain rule: %s", err)
+		}
 	} else {
 		desiredRoutes = vx.calRouteOnNonGateway(network)
-		desiredRules = vx.calRulesOnNonGateway()
 		desiredFDBs = vx.calFDBOnNonGateway(network)
+
+		err = vx.deleteChainRuleOnNode(gatewayChainRuleSpec)
+		if err != nil {
+			return fmt.Errorf("error deleting gateway chain rule: %s", err)
+		}
+		err = vx.addChainRuleOnNode(nonGatewayChainRuleSpec)
+		if err != nil {
+			return fmt.Errorf("error adding non gateway chain rule: %s", err)
+		}
 	}
 
 	err = networkutil.ApplyRoutes(currentRoutes, desiredRoutes)
@@ -119,6 +171,10 @@ func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error
 	err = networkutil.ApplyFDBs(currentFDBs, desiredFDBs)
 	if err != nil {
 		return fmt.Errorf("error applying fdb: %s", err)
+	}
+	err = networkutil.ApplyIPSet(vx.ipset, currentSet, desiredSet)
+	if err != nil {
+		return fmt.Errorf("error applying ip set: %s", err)
 	}
 
 	return nil
@@ -166,6 +222,28 @@ func New(cfg *config.Config) (routedriver.Driver, error) {
 }
 
 func (vx *vxlan) Init() (err error) {
+	vx.iptables, err = iptablesutil.New()
+	if err != nil {
+		return err
+	}
+
+	vx.ipset, err = ipsetutil.New(ravenMarkSet)
+	if err != nil {
+		return err
+	}
+	return
+}
+
+func (vx *vxlan) ensureRavenMarkChain() error {
+	if err := vx.iptables.NewChainIfNotExist(iptablesutil.MangleTable, iptablesutil.RavenMarkChain); err != nil {
+		return fmt.Errorf("error create %s chain: %s", iptablesutil.RavenMarkChain, err)
+	}
+	if err := vx.iptables.AppendIfNotExists(iptablesutil.MangleTable, iptablesutil.PreRoutingChain, "-j", iptablesutil.RavenMarkChain); err != nil {
+		return fmt.Errorf("error adding chain %s rule: %s", iptablesutil.PreRoutingChain, err)
+	}
+	if err := vx.iptables.AppendIfNotExists(iptablesutil.MangleTable, iptablesutil.OutputChain, "-j", iptablesutil.RavenMarkChain); err != nil {
+		return fmt.Errorf("error adding chain %s rule: %s", iptablesutil.OutputChain, err)
+	}
 	return nil
 }
 
@@ -235,52 +313,20 @@ func setSysctl(path string, contents []byte) error {
 // and configure the local gateway node as the next hop for packets sending to remote gateway nodes.
 // The routes entries format are equivalent to the following `ip route` command:
 //
-//	ip route add {remote_subnet} via {local_gateway_raven0_ip} dev raven0 src {node_cni_ip} onlink mtu {mtu} table {routeTableID}
+//	ip route add default via {local_gateway_raven0_ip} dev raven0 onlink mtu {mtu} table {routeTableID}
 func (vx *vxlan) calRouteOnNonGateway(network *types.Network) map[string]*netlink.Route {
 	routes := make(map[string]*netlink.Route)
-	for _, srcCIDR := range vx.nodeInfo(network).Subnets {
-		src, _, err := net.ParseCIDR(srcCIDR)
-		if err != nil {
-			klog.ErrorS(err, "error parsing cidr", "cidr", srcCIDR)
-			return routes
-		}
-
-		via := vxlanIP(net.ParseIP(network.LocalEndpoint.PrivateIP))
-		for _, v := range network.RemoteEndpoints {
-			for _, dstCIDR := range v.Subnets {
-				_, ipnet, err := net.ParseCIDR(dstCIDR)
-				if err != nil {
-					klog.ErrorS(err, "error parsing cidr", "cidr", dstCIDR)
-					continue
-				}
-				nr := &netlink.Route{
-					LinkIndex: vx.vxlanIface.Attrs().Index,
-					Scope:     netlink.SCOPE_UNIVERSE,
-					Dst:       ipnet,
-					Gw:        via,
-					Table:     routeTableID,
-					Src:       src,
-					Flags:     int(netlink.FLAG_ONLINK),
-					// TODO should minus vpn mtu OverHead
-					MTU: vx.vxlanIface.Attrs().MTU,
-				}
-				routes[networkutil.RouteKey(nr)] = nr
-			}
-		}
+	via := vxlanIP(net.ParseIP(network.LocalEndpoint.PrivateIP))
+	defaultNR := &netlink.Route{
+		LinkIndex: vx.vxlanIface.Attrs().Index,
+		Scope:     netlink.SCOPE_UNIVERSE,
+		Gw:        via,
+		Table:     routeTableID,
+		Flags:     int(netlink.FLAG_ONLINK),
+		MTU:       vx.vxlanIface.Attrs().MTU,
 	}
+	routes[networkutil.RouteKey(defaultNR)] = defaultNR
 	return routes
-}
-
-// calRulesOnNonGateway calculates and returns the desired rules on non-gateway node.
-// Rules on non-gateway will give raven route table a higher priority than main table in order to bypass the CNI routing rules.
-// The rules format are equivalent to the following `ip rule` command:
-//
-//	ip rule add from all lookup {routeTableID} prio {rulePriority}
-func (vx *vxlan) calRulesOnNonGateway() map[string]*netlink.Rule {
-	rules := make(map[string]*netlink.Rule)
-	rule := networkutil.NewRavenRule(rulePriority, routeTableID)
-	rules[networkutil.RuleKey(rule)] = rule
-	return rules
 }
 
 // calRouteOnGateway calculates and returns the desired routes on gateway.
@@ -317,30 +363,16 @@ func (vx *vxlan) calRouteOnGateway(network *types.Network) map[string]*netlink.R
 	return routes
 }
 
-// calRulesOnGateway calculates and returns the desired rules on gateway node.
+// calRulesOnNode calculates and returns the desired rules on node.
 // Rules on gateway node are used to configure route policy for the reverse-path route.
 // The rules format are equivalent to the following `ip rule` command:
 //
-//	ip rule add from {remote_nodeN_subnet_cidr} lookup {routeTableID} prio {rulePriority}
-func (vx *vxlan) calRulesOnGateway(network *types.Network) map[string]*netlink.Rule {
+//	ip rule add from all fwmark 0x40 lookup {routeTableID} prio {rulePriority}
+func (vx *vxlan) calRulesOnNode() map[string]*netlink.Rule {
 	rules := make(map[string]*netlink.Rule)
-	for _, v := range network.RemoteNodeInfo {
-		nodeInfo := network.RemoteNodeInfo[types.NodeName(v.NodeName)]
-		if nodeInfo == nil {
-			klog.Errorf("node %s not found in RemoteNodeInfo", v.NodeName)
-			continue
-		}
-		for _, srcCIDR := range nodeInfo.Subnets {
-			_, src, err := net.ParseCIDR(srcCIDR)
-			if err != nil {
-				klog.ErrorS(err, "error parsing cidr", "cidr", srcCIDR)
-				continue
-			}
-			rule := networkutil.NewRavenRule(rulePriority, routeTableID)
-			rule.Src = src
-			rules[networkutil.RuleKey(rule)] = rule
-		}
-	}
+	rule := networkutil.NewRavenRule(rulePriority, routeTableID)
+	rule.Mark = ravenMark
+	rules[networkutil.RuleKey(rule)] = rule
 	return rules
 }
 
@@ -385,6 +417,30 @@ func (vx *vxlan) calFDBOnNonGateway(network *types.Network) map[string]*netlink.
 	}
 }
 
+// calIPSetOnNonGateway calculates and returns the desired ip set entries on non-gateway node.
+// The ip set entries format equivalent to the following `ipset add SETNAME ENTRY` command:
+//
+//	ipset add raven-egress-set {remote_nodeN_subnet_cidr}
+func (vx *vxlan) calIPSetOnNode(network *types.Network) map[string]bool {
+	set := make(map[string]bool)
+	for _, v := range network.RemoteNodeInfo {
+		nodeInfo := network.RemoteNodeInfo[types.NodeName(v.NodeName)]
+		if nodeInfo == nil {
+			klog.Errorf("node %s not found in RemoteNodeInfo", v.NodeName)
+			continue
+		}
+		for _, srcCIDR := range nodeInfo.Subnets {
+			ip, cidr, _ := net.ParseCIDR(srcCIDR)
+			if bytes.Equal(cidr.Mask, net.CIDRMask(32, 32)) {
+				set[ip.String()] = true
+			} else {
+				set[cidr.String()] = true
+			}
+		}
+	}
+	return set
+}
+
 func (vx *vxlan) Cleanup() error {
 	errList := errorlist.List{}
 	if err := networkutil.CleanRulesOnNode(routeTableID); err != nil {
@@ -395,19 +451,57 @@ func (vx *vxlan) Cleanup() error {
 		errList = errList.Append(err)
 	}
 
-	l, err := netlinkutil.LinkByName(vxlanLinkName)
-	if _, ok := err.(netlink.LinkNotFoundError); ok {
-		return errList.AsError()
+	if err := deleteVxlanLink(vxlanLinkName); err != nil {
+		errList = errList.Append(err)
 	}
+
+	// Clean may be called more than one time, so we should ensure chain exists
+
+	err := vx.iptables.NewChainIfNotExist(iptablesutil.MangleTable, iptablesutil.RavenMarkChain)
 	if err != nil {
-		errList = errList.Append(fmt.Errorf("error listing routes: %s", err))
-		return errList.AsError()
+		errList = errList.Append(fmt.Errorf("error ensure chain %s: %s", iptablesutil.RavenMarkChain, err))
 	}
-	err = netlink.LinkDel(l)
+	err = vx.iptables.DeleteIfExists(iptablesutil.MangleTable, iptablesutil.PreRoutingChain, "-j", iptablesutil.RavenMarkChain)
 	if err != nil {
-		errList = errList.Append(fmt.Errorf("error deleting vxlan link: %s", err))
+		errList = errList.Append(fmt.Errorf("error deleting %s chain rule: %s", iptablesutil.PreRoutingChain, err))
+	}
+	err = vx.iptables.DeleteIfExists(iptablesutil.MangleTable, iptablesutil.OutputChain, "-j", iptablesutil.RavenMarkChain)
+	if err != nil {
+		errList = errList.Append(fmt.Errorf("error deleting %s chain rule: %s", iptablesutil.OutputChain, err))
+	}
+	err = vx.iptables.ClearAndDeleteChain(iptablesutil.MangleTable, iptablesutil.RavenMarkChain)
+	if err != nil {
+		errList = errList.Append(fmt.Errorf("error deleting %s chain %s", iptablesutil.RavenMarkChain, err))
+	}
+
+	// Clean may be called more than one time, so we should ensure ip set exists
+	vx.ipset, err = ipsetutil.New(ravenMarkSet)
+	if err != nil {
+		errList = errList.Append(fmt.Errorf("error ensure ip set %s: %s", ravenMarkSet, err))
+	}
+	err = vx.ipset.Flush()
+	if err != nil {
+		errList = errList.Append(fmt.Errorf("error flushing ipset: %s", err))
+	}
+	err = vx.ipset.Destroy()
+	if err != nil {
+		errList = errList.Append(fmt.Errorf("error destroying ipset: %s", err))
 	}
 	return errList.AsError()
+}
+
+func (vx *vxlan) deleteChainRuleOnNode(ruleSpec []string) error {
+	if err := vx.iptables.DeleteIfExists(iptablesutil.MangleTable, iptablesutil.RavenMarkChain, ruleSpec...); err != nil {
+		return fmt.Errorf("error deleting chain %s rule %v: %s", iptablesutil.RavenMarkChain, ruleSpec, err)
+	}
+	return nil
+}
+
+func (vx *vxlan) addChainRuleOnNode(ruleSpec []string) error {
+	if err := vx.iptables.AppendIfNotExists(iptablesutil.MangleTable, iptablesutil.RavenMarkChain, ruleSpec...); err != nil {
+		return fmt.Errorf("error adding chain %s rule %v: %s", iptablesutil.RavenMarkChain, ruleSpec, err)
+	}
+	return nil
 }
 
 func vxlanIP(privateIP net.IP) net.IP {

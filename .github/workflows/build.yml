@@ -40,7 +40,11 @@ jobs:
             ${{ runner.os }}-buildx-
 
       - name: Unit test
-        run: sudo go test -v -short ./pkg/... ./cmd/... -coverprofile cover.out
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ipset
+          sudo apt-get install -y iptables
+          sudo go test -v -short ./pkg/... ./cmd/... -coverprofile cover.out
 
       - name: Publish Unit Test Coverage
         uses: codecov/codecov-action@v3
@@ -100,10 +104,14 @@ jobs:
           path: /tmp/.buildx-cache
           key: ${{ runner.os }}-buildx-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-buildx-
+            ${{ runner.os }}-buildx- 
 
       - name: Unit test
-        run: sudo go test -v -short ./pkg/... ./cmd/...
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ipset
+          sudo apt-get install -y iptables
+          sudo go test -v -short ./pkg/... ./cmd/...
 
       - name: Docker meta
         id: meta

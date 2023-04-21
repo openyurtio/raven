@@ -22,7 +22,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=on go build 
 
 FROM alpine:3.17
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories \
-    && apk add openrc libreswan libreswan-openrc iptables python3 bash --no-cache \
+    && apk add openrc libreswan libreswan-openrc ipset iptables python3 bash --no-cache \
     && sed -i 's/runscript/openrc-run/g' /etc/init.d/ipsec \
     && sed -i 's/#logfile=/logfile=/g' /etc/ipsec.conf \
     && mkdir -p /run/openrc \
