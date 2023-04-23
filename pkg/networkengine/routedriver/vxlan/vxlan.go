@@ -95,7 +95,7 @@ func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error
 
 	// The desired and current ipset entries calculated from given network.
 	// The key is ip set entry
-	var desiredSet, currentSet map[string]bool
+	var desiredSet, currentSet map[string]*netlink.IPSetEntry
 
 	vx.ipset, err = ipsetutil.New(ravenMarkSet)
 	if err != nil {
@@ -421,8 +421,8 @@ func (vx *vxlan) calFDBOnNonGateway(network *types.Network) map[string]*netlink.
 // The ip set entries format equivalent to the following `ipset add SETNAME ENTRY` command:
 //
 //	ipset add raven-egress-set {remote_nodeN_subnet_cidr}
-func (vx *vxlan) calIPSetOnNode(network *types.Network) map[string]bool {
-	set := make(map[string]bool)
+func (vx *vxlan) calIPSetOnNode(network *types.Network) map[string]*netlink.IPSetEntry {
+	set := make(map[string]*netlink.IPSetEntry)
 	for _, v := range network.RemoteNodeInfo {
 		nodeInfo := network.RemoteNodeInfo[types.NodeName(v.NodeName)]
 		if nodeInfo == nil {
@@ -430,12 +430,14 @@ func (vx *vxlan) calIPSetOnNode(network *types.Network) map[string]bool {
 			continue
 		}
 		for _, srcCIDR := range nodeInfo.Subnets {
-			ip, cidr, _ := net.ParseCIDR(srcCIDR)
-			if bytes.Equal(cidr.Mask, net.CIDRMask(32, 32)) {
-				set[ip.String()] = true
-			} else {
-				set[cidr.String()] = true
+			_, ipNet, _ := net.ParseCIDR(srcCIDR)
+			ones, _ := ipNet.Mask.Size()
+			entry := &netlink.IPSetEntry{
+				IP:      ipNet.IP,
+				CIDR:    uint8(ones),
+				Replace: true,
 			}
+			set[ipsetutil.SetEntryKey(entry)] = entry
 		}
 	}
 	return set

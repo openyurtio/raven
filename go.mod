@@ -5,7 +5,6 @@ go 1.18
 require (
 	github.com/EvilSuperstars/go-cidrman v0.0.0-20190607145828-28e79e32899a
 	github.com/coreos/go-iptables v0.6.0
-	github.com/gonetx/ipset v0.1.0
 	github.com/openyurtio/openyurt v1.2.1-0.20230320014349-7cc573e1d097
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v1.7.0

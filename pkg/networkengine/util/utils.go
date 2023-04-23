@@ -24,7 +24,6 @@ import (
 	"net"
 	"syscall"
 
-	"github.com/gonetx/ipset"
 	"github.com/vdobler/ht/errorlist"
 	"github.com/vishvananda/netlink"
 	"k8s.io/klog/v2"
@@ -86,14 +85,14 @@ func ListRoutesOnNode(routeTableID int) (map[string]*netlink.Route, error) {
 	return ro, nil
 }
 
-func ListIPSetOnNode(set ipsetutil.IPSetInterface) (map[string]bool, error) {
+func ListIPSetOnNode(set ipsetutil.IPSetInterface) (map[string]*netlink.IPSetEntry, error) {
 	info, err := set.List()
 	if err != nil {
 		return nil, err
 	}
-	ro := make(map[string]bool)
-	for _, v := range info.Entries {
-		ro[v] = true
+	ro := make(map[string]*netlink.IPSetEntry)
+	for i := range info.Entries {
+		ro[ipsetutil.SetEntryKey(&info.Entries[i])] = &info.Entries[i]
 	}
 	return ro, nil
 }
@@ -151,25 +150,25 @@ func ApplyRoutes(current, desired map[string]*netlink.Route) (err error) {
 	return errList.AsError()
 }
 
-func ApplyIPSet(set ipsetutil.IPSetInterface, current, desired map[string]bool) (err error) {
+func ApplyIPSet(set ipsetutil.IPSetInterface, current, desired map[string]*netlink.IPSetEntry) (err error) {
 	if klog.V(5).Enabled() {
 		klog.InfoS("applying ipset entry", "current", current, "desired", desired)
 	}
 	errList := errorlist.List{}
-	for k := range desired {
+	for k, v := range desired {
 		_, ok := current[k]
 		if !ok {
 			klog.InfoS("adding entry", "entry", k)
-			err = set.Add(k, ipset.Exist(true))
+			err = set.Add(v)
 			errList = errList.Append(err)
 			continue
 		}
 		delete(current, k)
 	}
 	// remove unwanted entries
-	for k := range current {
+	for k, v := range current {
 		klog.InfoS("deleting ipset entry", "entry", k)
-		err = set.Del(k)
+		err = set.Del(v)
 		errList = errList.Append(err)
 	}
 	return errList.AsError()
