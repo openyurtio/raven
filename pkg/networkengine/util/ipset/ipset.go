@@ -20,120 +20,103 @@
 package ipsetutil
 
 import (
-	"sync"
+	"fmt"
 
-	"github.com/gonetx/ipset"
+	"github.com/vishvananda/netlink"
 	"k8s.io/klog/v2"
 )
 
 type IPSetInterface interface {
-	List(options ...ipset.Option) (*ipset.Info, error)
+	List() (*netlink.IPSetResult, error)
 	Name() string
-	Add(entry string, options ...ipset.Option) error
-	Del(entry string, options ...ipset.Option) error
+	Add(entry *netlink.IPSetEntry) error
+	Del(entry *netlink.IPSetEntry) error
 	Flush() error
 	Destroy() error
 }
 
 type ipSetWrapper struct {
-	ipset.IPSet
-}
-
-var (
-	once sync.Once
-)
-
-func check() error {
-	if err := ipset.Check(); err != nil {
-		klog.ErrorS(err, "error on ipset.Check")
-		return err
-	}
-	if klog.V(5).Enabled() {
-		klog.V(5).InfoS("ipset.Check succeeded")
-	}
-	return nil
+	setName string
 }
 
 func New(setName string) (IPSetInterface, error) {
-	var err error
-	once.Do(func() {
-		err = check()
+	err := netlink.IpsetCreate(setName, "hash:net", netlink.IpsetCreateOptions{
+		Replace: true,
 	})
 	if err != nil {
-		return nil, err
-	}
-
-	set, err := ipset.New(setName, ipset.HashNet, ipset.Exist(true))
-	if err != nil {
-		klog.ErrorS(err, "error on ipset.Create", "setName", setName)
+		klog.ErrorS(err, "error on netlink.IpsetCreate", "setName", setName)
 		return nil, err
 	}
 	if klog.V(5).Enabled() {
-		klog.V(5).InfoS("ipset.Create succeeded", "setName", setName)
+		klog.V(5).InfoS("netlink.IpsetCreate succeeded", "setName", setName)
 	}
-	return &ipSetWrapper{set}, nil
+	return &ipSetWrapper{setName}, nil
 }
 
-func (i *ipSetWrapper) List(options ...ipset.Option) (*ipset.Info, error) {
-	info, err := i.IPSet.List(options...)
+func (i *ipSetWrapper) List() (*netlink.IPSetResult, error) {
+	info, err := netlink.IpsetList(i.Name())
 	if err != nil {
-		klog.ErrorS(err, "error on ipset.List", "setName", i.Name())
+		klog.ErrorS(err, "error on netlink.IpsetList", "setName", i.Name())
 		return nil, err
 	}
 	if klog.V(5).Enabled() {
-		klog.V(5).InfoS("ipset.List succeeded", "setName", i.Name())
+		klog.V(5).InfoS("netlink.IpsetList succeeded", "setName", i.Name())
 	}
 	return info, nil
 }
 
 func (i *ipSetWrapper) Name() string {
-	return i.IPSet.Name()
+	return i.setName
 }
 
-func (i *ipSetWrapper) Add(entry string, options ...ipset.Option) (err error) {
-	err = i.IPSet.Add(entry, options...)
+func (i *ipSetWrapper) Add(entry *netlink.IPSetEntry) (err error) {
+	err = netlink.IpsetAdd(i.Name(), entry)
 	if err != nil {
-		klog.ErrorS(err, "error on ipset.Add", "setName", i.Name(), "entry", entry, "opts", options)
+		klog.ErrorS(err, "error on netlink.IpsetAdd", "setName", i.Name(), "entry", SetEntryKey(entry))
 		return
 	}
 	if klog.V(5).Enabled() {
-		klog.V(5).InfoS("ipset.Add succeeded", "setName", i.Name(), "entry", entry, "opts", options)
+		klog.V(5).InfoS("netlink.IpsetAdd succeeded", "setName", i.Name(), "entry", SetEntryKey(entry))
 	}
 	return
 }
 
-func (i *ipSetWrapper) Del(entry string, options ...ipset.Option) (err error) {
-	err = i.IPSet.Del(entry, options...)
+func (i *ipSetWrapper) Del(entry *netlink.IPSetEntry) (err error) {
+	err = netlink.IpsetDel(i.Name(), entry)
 	if err != nil {
-		klog.ErrorS(err, "error on ipset.Del", "setName", i.Name(), "entry", entry)
+		klog.ErrorS(err, "error on netlink.IpsetDel", "setName", i.Name(), "entry", SetEntryKey(entry))
 		return
 	}
 	if klog.V(5).Enabled() {
-		klog.V(5).InfoS("ipset.Del succeeded", "setName", i.Name(), "entry", entry)
+		klog.V(5).InfoS("netlink.IpsetDel succeeded", "setName", i.Name(), "entry", SetEntryKey(entry))
 	}
 	return
 }
 
 func (i *ipSetWrapper) Flush() (err error) {
-	err = i.IPSet.Flush()
+	err = netlink.IpsetFlush(i.Name())
 	if err != nil {
-		klog.ErrorS(err, "error on ipset.Flush", "setName", i.Name())
+		klog.ErrorS(err, "error on netlink.IpsetFlush", "setName", i.Name())
 		return
 	}
 	if klog.V(5).Enabled() {
-		klog.V(5).InfoS("ipset.Flush succeeded", "setName", i.Name())
+		klog.V(5).InfoS("netlink.IpsetFlush succeeded", "setName", i.Name())
 	}
 	return
 }
 
 func (i *ipSetWrapper) Destroy() (err error) {
-	err = i.IPSet.Destroy()
+	err = netlink.IpsetDestroy(i.Name())
 	if err != nil {
-		klog.ErrorS(err, "error on ipset.Destroy")
+		klog.ErrorS(err, "error on netlink.IpsetDestroy")
 		return
 	}
 	if klog.V(5).Enabled() {
-		klog.V(5).InfoS("ipset.Destroy succeeded", "setName", i.Name())
+		klog.V(5).InfoS("netlink.IpsetDestroy succeeded", "setName", i.Name())
 	}
 	return
+}
+
+func SetEntryKey(setEntry *netlink.IPSetEntry) string {
+	return fmt.Sprintf("%s/%d", setEntry.IP.String(), setEntry.CIDR)
 }
