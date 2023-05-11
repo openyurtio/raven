@@ -25,6 +25,7 @@ import (
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/cmd/agent/app/options"
+	"github.com/openyurtio/raven/pkg/features"
 	"github.com/openyurtio/raven/pkg/k8s"
 	"github.com/openyurtio/raven/pkg/networkengine/routedriver"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
@@ -52,6 +53,7 @@ func NewRavenAgentCommand(ctx context.Context) *cobra.Command {
 	}
 
 	agentOptions.AddFlags(cmd.Flags())
+	features.DefaultMutableFeatureGate.AddFlag(cmd.Flags())
 	return cmd
 }
 
