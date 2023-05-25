@@ -20,8 +20,11 @@
 package iptablesutil
 
 const (
-	PreRoutingChain = "PREROUTING"
-	OutputChain     = "OUTPUT"
-	RavenMarkChain  = "RAVEN-MARK-CHAIN"
-	MangleTable     = "mangle"
+	PreRoutingChain       = "PREROUTING"
+	PostRoutingChain      = "POSTROUTING"
+	OutputChain           = "OUTPUT"
+	RavenMarkChain        = "RAVEN-MARK-CHAIN"
+	RavenPostRoutingChain = "RAVEN-POSTROUTING"
+	MangleTable           = "mangle"
+	NatTable              = "nat"
 )

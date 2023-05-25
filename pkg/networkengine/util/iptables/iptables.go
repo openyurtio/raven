@@ -30,6 +30,7 @@ type IPTablesInterface interface {
 	List(table, chain string) ([]string, error)
 	AppendIfNotExists(table, chain string, rulespec ...string) error
 	DeleteIfExists(table, chain string, rulespec ...string) error
+	InsertIfNotExists(table, chain string, pos int, rulespec ...string) error
 }
 
 type iptablesWrapper struct {
@@ -110,6 +111,21 @@ func (ipt *iptablesWrapper) DeleteIfExists(table, chain string, rulespec ...stri
 	}
 	if klog.V(5).Enabled() {
 		klog.V(5).InfoS("iptables.Delete succeeded", "table", table, "chain", chain, "rulespec", rulespec)
+	}
+	return nil
+}
+
+func (ipt *iptablesWrapper) InsertIfNotExists(table, chain string, pos int, rulespec ...string) error {
+	exists, err := ipt.Exists(table, chain, rulespec...)
+	if err == nil && !exists {
+		err = ipt.Insert(table, chain, pos, rulespec...)
+	}
+	if err != nil {
+		klog.ErrorS(err, "error on iptables.Insert", "table", table, "chain", chain, "pos", pos, "rulespec", rulespec, "exists", exists)
+		return err
+	}
+	if klog.V(5).Enabled() {
+		klog.V(5).InfoS("iptables.Insert succeeded", "table", table, "chain", chain, "pos", pos, "rulespec", rulespec, "exists", exists)
 	}
 	return nil
 }

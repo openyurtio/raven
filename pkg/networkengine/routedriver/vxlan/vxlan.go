@@ -55,8 +55,8 @@ const (
 )
 
 var (
-	nonGatewayChainRuleSpec = []string{"-m", "set", "--match-set", ravenMarkSet, "dst", "-j", "MARK", "--set-mark", fmt.Sprintf("%d", ravenMark)}
-	gatewayChainRuleSpec    = []string{"-m", "set", "--match-set", ravenMarkSet, "src", "-j", "MARK", "--set-mark", fmt.Sprintf("%d", ravenMark)}
+	nonGatewayChainRuleSpec = []string{"-m", "set", "--match-set", ravenMarkSet, "dst", "-m", "comment", "--comment", "raven traffic requiring certain mark", "-j", "MARK", "--set-mark", fmt.Sprintf("%d", ravenMark)}
+	gatewayChainRuleSpec    = []string{"-m", "set", "--match-set", ravenMarkSet, "src", "-m", "comment", "--comment", "raven traffic requiring certain mark", "-j", "MARK", "--set-mark", fmt.Sprintf("%d", ravenMark)}
 )
 
 func init() {
@@ -102,7 +102,7 @@ func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error
 		return fmt.Errorf("error create ip set: %s", err)
 	}
 
-	err = vx.ensureRavenMarkChain()
+	err = vx.ensureRavenChain()
 	if err != nil {
 		return fmt.Errorf("error ensure raven mark chain: %s", err)
 	}
@@ -138,11 +138,11 @@ func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error
 		desiredRoutes = vx.calRouteOnGateway(network)
 		desiredFDBs = vx.calFDBOnGateway(network)
 
-		err = vx.deleteChainRuleOnNode(nonGatewayChainRuleSpec)
+		err = vx.deleteChainRuleOnNode(iptablesutil.MangleTable, iptablesutil.RavenMarkChain, nonGatewayChainRuleSpec)
 		if err != nil {
 			return fmt.Errorf("error deleting non gateway chain rule: %s", err)
 		}
-		err = vx.addChainRuleOnNode(gatewayChainRuleSpec)
+		err = vx.addChainRuleOnNode(iptablesutil.MangleTable, iptablesutil.RavenMarkChain, gatewayChainRuleSpec)
 		if err != nil {
 			return fmt.Errorf("error adding gateway chain rule: %s", err)
 		}
@@ -150,11 +150,11 @@ func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error
 		desiredRoutes = vx.calRouteOnNonGateway(network)
 		desiredFDBs = vx.calFDBOnNonGateway(network)
 
-		err = vx.deleteChainRuleOnNode(gatewayChainRuleSpec)
+		err = vx.deleteChainRuleOnNode(iptablesutil.MangleTable, iptablesutil.RavenMarkChain, gatewayChainRuleSpec)
 		if err != nil {
 			return fmt.Errorf("error deleting gateway chain rule: %s", err)
 		}
-		err = vx.addChainRuleOnNode(nonGatewayChainRuleSpec)
+		err = vx.addChainRuleOnNode(iptablesutil.MangleTable, iptablesutil.RavenMarkChain, nonGatewayChainRuleSpec)
 		if err != nil {
 			return fmt.Errorf("error adding non gateway chain rule: %s", err)
 		}
@@ -234,16 +234,28 @@ func (vx *vxlan) Init() (err error) {
 	return
 }
 
-func (vx *vxlan) ensureRavenMarkChain() error {
+func (vx *vxlan) ensureRavenChain() error {
+	// for raven mark
 	if err := vx.iptables.NewChainIfNotExist(iptablesutil.MangleTable, iptablesutil.RavenMarkChain); err != nil {
 		return fmt.Errorf("error create %s chain: %s", iptablesutil.RavenMarkChain, err)
 	}
-	if err := vx.iptables.AppendIfNotExists(iptablesutil.MangleTable, iptablesutil.PreRoutingChain, "-j", iptablesutil.RavenMarkChain); err != nil {
+	if err := vx.iptables.AppendIfNotExists(iptablesutil.MangleTable, iptablesutil.PreRoutingChain, "-m", "comment", "--comment", "raven traffic rules for mark", "-j", iptablesutil.RavenMarkChain); err != nil {
 		return fmt.Errorf("error adding chain %s rule: %s", iptablesutil.PreRoutingChain, err)
 	}
-	if err := vx.iptables.AppendIfNotExists(iptablesutil.MangleTable, iptablesutil.OutputChain, "-j", iptablesutil.RavenMarkChain); err != nil {
+	if err := vx.iptables.AppendIfNotExists(iptablesutil.MangleTable, iptablesutil.OutputChain, "-m", "comment", "--comment", "raven traffic rules for mark", "-j", iptablesutil.RavenMarkChain); err != nil {
 		return fmt.Errorf("error adding chain %s rule: %s", iptablesutil.OutputChain, err)
 	}
+	// for raven skip nat
+	if err := vx.iptables.NewChainIfNotExist(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain); err != nil {
+		return fmt.Errorf("error create %s chain: %s", iptablesutil.RavenPostRoutingChain, err)
+	}
+	if err := vx.iptables.InsertIfNotExists(iptablesutil.NatTable, iptablesutil.PostRoutingChain, 1, "-m", "comment", "--comment", "raven traffic should skip NAT", "-o", "raven0", "-j", iptablesutil.RavenPostRoutingChain); err != nil {
+		return fmt.Errorf("error adding chain %s rule: %s", iptablesutil.PostRoutingChain, err)
+	}
+	if err := vx.iptables.AppendIfNotExists(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain, "-j", "ACCEPT"); err != nil {
+		return fmt.Errorf("error adding chain %s rule: %s", iptablesutil.RavenPostRoutingChain, err)
+	}
+
 	return nil
 }
 
@@ -458,7 +470,6 @@ func (vx *vxlan) Cleanup() error {
 	}
 
 	// Clean may be called more than one time, so we should ensure chain exists
-
 	err := vx.iptables.NewChainIfNotExist(iptablesutil.MangleTable, iptablesutil.RavenMarkChain)
 	if err != nil {
 		errList = errList.Append(fmt.Errorf("error ensure chain %s: %s", iptablesutil.RavenMarkChain, err))
@@ -474,6 +485,19 @@ func (vx *vxlan) Cleanup() error {
 	err = vx.iptables.ClearAndDeleteChain(iptablesutil.MangleTable, iptablesutil.RavenMarkChain)
 	if err != nil {
 		errList = errList.Append(fmt.Errorf("error deleting %s chain %s", iptablesutil.RavenMarkChain, err))
+	}
+
+	err = vx.iptables.NewChainIfNotExist(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain)
+	if err != nil {
+		errList = errList.Append(fmt.Errorf("error create %s chain: %s", iptablesutil.PostRoutingChain, err))
+	}
+	err = vx.iptables.DeleteIfExists(iptablesutil.NatTable, iptablesutil.PostRoutingChain, "-o", "raven0", "-j", iptablesutil.RavenPostRoutingChain)
+	if err != nil {
+		errList = errList.Append(fmt.Errorf("error deleting %s chain rule: %s", iptablesutil.PostRoutingChain, err))
+	}
+	err = vx.iptables.ClearAndDeleteChain(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain)
+	if err != nil {
+		errList = errList.Append(fmt.Errorf("error deleting %s chain %s", iptablesutil.RavenPostRoutingChain, err))
 	}
 
 	// Clean may be called more than one time, so we should ensure ip set exists
@@ -492,16 +516,16 @@ func (vx *vxlan) Cleanup() error {
 	return errList.AsError()
 }
 
-func (vx *vxlan) deleteChainRuleOnNode(ruleSpec []string) error {
-	if err := vx.iptables.DeleteIfExists(iptablesutil.MangleTable, iptablesutil.RavenMarkChain, ruleSpec...); err != nil {
-		return fmt.Errorf("error deleting chain %s rule %v: %s", iptablesutil.RavenMarkChain, ruleSpec, err)
+func (vx *vxlan) deleteChainRuleOnNode(table string, chain string, ruleSpec []string) error {
+	if err := vx.iptables.DeleteIfExists(table, chain, ruleSpec...); err != nil {
+		return fmt.Errorf("error deleting table %s chain %s rule %v: %s", table, chain, ruleSpec, err)
 	}
 	return nil
 }
 
-func (vx *vxlan) addChainRuleOnNode(ruleSpec []string) error {
-	if err := vx.iptables.AppendIfNotExists(iptablesutil.MangleTable, iptablesutil.RavenMarkChain, ruleSpec...); err != nil {
-		return fmt.Errorf("error adding chain %s rule %v: %s", iptablesutil.RavenMarkChain, ruleSpec, err)
+func (vx *vxlan) addChainRuleOnNode(table string, chain string, ruleSpec []string) error {
+	if err := vx.iptables.AppendIfNotExists(table, chain, ruleSpec...); err != nil {
+		return fmt.Errorf("error adding table %s chain %s rule %v: %s", table, chain, ruleSpec, err)
 	}
 	return nil
 }
