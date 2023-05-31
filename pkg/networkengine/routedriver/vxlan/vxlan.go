@@ -474,11 +474,11 @@ func (vx *vxlan) Cleanup() error {
 	if err != nil {
 		errList = errList.Append(fmt.Errorf("error ensure chain %s: %s", iptablesutil.RavenMarkChain, err))
 	}
-	err = vx.iptables.DeleteIfExists(iptablesutil.MangleTable, iptablesutil.PreRoutingChain, "-j", iptablesutil.RavenMarkChain)
+	err = vx.iptables.DeleteIfExists(iptablesutil.MangleTable, iptablesutil.PreRoutingChain, "-m", "comment", "--comment", "raven traffic rules for mark", "-j", iptablesutil.RavenMarkChain)
 	if err != nil {
 		errList = errList.Append(fmt.Errorf("error deleting %s chain rule: %s", iptablesutil.PreRoutingChain, err))
 	}
-	err = vx.iptables.DeleteIfExists(iptablesutil.MangleTable, iptablesutil.OutputChain, "-j", iptablesutil.RavenMarkChain)
+	err = vx.iptables.DeleteIfExists(iptablesutil.MangleTable, iptablesutil.OutputChain, "-m", "comment", "--comment", "raven traffic rules for mark", "-j", iptablesutil.RavenMarkChain)
 	if err != nil {
 		errList = errList.Append(fmt.Errorf("error deleting %s chain rule: %s", iptablesutil.OutputChain, err))
 	}
@@ -491,7 +491,7 @@ func (vx *vxlan) Cleanup() error {
 	if err != nil {
 		errList = errList.Append(fmt.Errorf("error create %s chain: %s", iptablesutil.PostRoutingChain, err))
 	}
-	err = vx.iptables.DeleteIfExists(iptablesutil.NatTable, iptablesutil.PostRoutingChain, "-o", "raven0", "-j", iptablesutil.RavenPostRoutingChain)
+	err = vx.iptables.DeleteIfExists(iptablesutil.NatTable, iptablesutil.PostRoutingChain, "-m", "comment", "--comment", "raven traffic should skip NAT", "-o", "raven0", "-j", iptablesutil.RavenPostRoutingChain)
 	if err != nil {
 		errList = errList.Append(fmt.Errorf("error deleting %s chain rule: %s", iptablesutil.PostRoutingChain, err))
 	}
