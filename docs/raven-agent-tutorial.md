@@ -6,19 +6,17 @@ Suppose you have an edge kubernetes cluster with nodes in different physical reg
 
 ## Pre-requisite
 
-1. Add openyurt-helm repository with helm cli, see more detail  in [openyurt-helm](https://github.com/openyurtio/openyurt-helm).
+- 1 Add openyurt-helm repository with helm cli, see more detail  in [openyurt-helm](https://github.com/openyurtio/openyurt-helm).
 
 ```helm repo add openyurt https://openyurtio.github.io/openyurt-helm```
 
-2. Intall yurt-manager into your cluster.
+- 2 Intall yurt-manager into your cluster.
 
 ```helm upgrade --install yurt-manager -n kube-system openyurt/yurt-manager```
 
-3. Install raven agent on all node. （Notice： Port 8080 should be available on node.)
+- 3 Install raven agent on all node. （Notice： Port 8080 should be available on node.)
 
 ```helm upgrade --install raven-agent -n kube-system openyurt/raven-agent```
-
-
 
 ## Label nodes in different physical regions
 
