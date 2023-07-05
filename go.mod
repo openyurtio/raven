@@ -12,7 +12,7 @@ require (
 	github.com/stretchr/testify v1.8.3
 	github.com/vdobler/ht v5.3.0+incompatible
 	github.com/vishvananda/netlink v1.2.1-beta.2
-	golang.org/x/sys v0.8.0
+	golang.org/x/sys v0.9.0
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20220504211119-3d4a969bb56b
 	k8s.io/apimachinery v0.23.2
 	k8s.io/apiserver v0.23.2
