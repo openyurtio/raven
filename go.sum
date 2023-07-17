@@ -404,8 +404,8 @@ github.com/onsi/gomega v1.7.1/go.mod h1:XdKZgCCFLUoM/7CFJVPcG8C1xQ1AJ0vpAezJrB7J
 github.com/onsi/gomega v1.10.1/go.mod h1:iN09h71vgCQne3DLsj+A5owkum+a2tYe+TOCB1ybHNo=
 github.com/onsi/gomega v1.19.0 h1:4ieX6qQjPP/BfC3mpsAtIGGlxTWPeA3Inl/7DtXw1tw=
 github.com/opentracing/opentracing-go v1.1.0/go.mod h1:UkNAQd3GIcIGf0SeVgPpRdFStlNbqXla1AfSYxPUl2o=
-github.com/openyurtio/openyurt v1.3.0 h1:ItKD2HL+et4ar69CHC9qA2DOSvrHOgtDa4hnhHUQvT4=
-github.com/openyurtio/openyurt v1.3.0/go.mod h1:1MDc64J8KKv57bF71l9mA5o+f1s0a8QkwEOfVmFfZhc=
+github.com/openyurtio/openyurt v1.3.4 h1:Ki27NrG3aDCET6HCho8aq2V+ilU7k06pLE2wn0SctVE=
+github.com/openyurtio/openyurt v1.3.4/go.mod h1:nwe5kApKrEwqFK04xu984G/r6DQ7EB1Jx+lcvzvgA0I=
 github.com/pascaldekloe/goe v0.0.0-20180627143212-57f6aae5913c/go.mod h1:lzWF7FIEvWOWxwDKqyGYQf6ZUaNfKdP144TG7ZOy1lc=
 github.com/pelletier/go-toml v1.2.0/go.mod h1:5z9KED0ma1S8pY6P1sdut58dfprrGBbd/94hg7ilaic=
 github.com/pelletier/go-toml v1.9.3/go.mod h1:u1nR/EPcESfeI/szUZKdtJ0xRNbUoANCkoOuaOx1Y+c=
