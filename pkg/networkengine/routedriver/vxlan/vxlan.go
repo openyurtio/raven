@@ -245,16 +245,6 @@ func (vx *vxlan) ensureRavenChain() error {
 	if err := vx.iptables.AppendIfNotExists(iptablesutil.MangleTable, iptablesutil.OutputChain, "-m", "comment", "--comment", "raven traffic rules for mark", "-j", iptablesutil.RavenMarkChain); err != nil {
 		return fmt.Errorf("error adding chain %s rule: %s", iptablesutil.OutputChain, err)
 	}
-	// for raven skip nat
-	if err := vx.iptables.NewChainIfNotExist(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain); err != nil {
-		return fmt.Errorf("error create %s chain: %s", iptablesutil.RavenPostRoutingChain, err)
-	}
-	if err := vx.iptables.InsertIfNotExists(iptablesutil.NatTable, iptablesutil.PostRoutingChain, 1, "-m", "comment", "--comment", "raven traffic should skip NAT", "-o", "raven0", "-j", iptablesutil.RavenPostRoutingChain); err != nil {
-		return fmt.Errorf("error adding chain %s rule: %s", iptablesutil.PostRoutingChain, err)
-	}
-	if err := vx.iptables.AppendIfNotExists(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain, "-j", "ACCEPT"); err != nil {
-		return fmt.Errorf("error adding chain %s rule: %s", iptablesutil.RavenPostRoutingChain, err)
-	}
 
 	return nil
 }
@@ -485,19 +475,6 @@ func (vx *vxlan) Cleanup() error {
 	err = vx.iptables.ClearAndDeleteChain(iptablesutil.MangleTable, iptablesutil.RavenMarkChain)
 	if err != nil {
 		errList = errList.Append(fmt.Errorf("error deleting %s chain %s", iptablesutil.RavenMarkChain, err))
-	}
-
-	err = vx.iptables.NewChainIfNotExist(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain)
-	if err != nil {
-		errList = errList.Append(fmt.Errorf("error create %s chain: %s", iptablesutil.PostRoutingChain, err))
-	}
-	err = vx.iptables.DeleteIfExists(iptablesutil.NatTable, iptablesutil.PostRoutingChain, "-m", "comment", "--comment", "raven traffic should skip NAT", "-o", "raven0", "-j", iptablesutil.RavenPostRoutingChain)
-	if err != nil {
-		errList = errList.Append(fmt.Errorf("error deleting %s chain rule: %s", iptablesutil.PostRoutingChain, err))
-	}
-	err = vx.iptables.ClearAndDeleteChain(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain)
-	if err != nil {
-		errList = errList.Append(fmt.Errorf("error deleting %s chain %s", iptablesutil.RavenPostRoutingChain, err))
 	}
 
 	// Clean may be called more than one time, so we should ensure ip set exists
