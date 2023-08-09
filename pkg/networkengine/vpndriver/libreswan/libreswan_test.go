@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	iptablesutil "github.com/openyurtio/raven/pkg/networkengine/util/iptables"
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
 	"github.com/openyurtio/raven/pkg/types"
@@ -374,6 +375,9 @@ func TestLibreswan_Apply(t *testing.T) {
 				connections: make(map[string]*vpndriver.Connection),
 				nodeName:    types.NodeName(v.nodeName),
 			}
+			var err error
+			l.iptables, err = iptablesutil.New()
+			a.NoError(err)
 			a.NoError(l.Apply(v.network, nil)) // libreswan will not use route driver mtu fn
 			connName := make(map[string]struct{})
 			for name := range w.connections {

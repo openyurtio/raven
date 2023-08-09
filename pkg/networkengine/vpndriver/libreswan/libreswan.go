@@ -27,6 +27,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
+	iptablesutil "github.com/openyurtio/raven/pkg/networkengine/util/iptables"
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
 	"github.com/openyurtio/raven/pkg/types"
@@ -56,11 +57,17 @@ const (
 type libreswan struct {
 	connections map[string]*vpndriver.Connection
 	nodeName    types.NodeName
+
+	iptables iptablesutil.IPTablesInterface
 }
 
-func (l *libreswan) Init() error {
+func (l *libreswan) Init() (err error) {
+	l.iptables, err = iptablesutil.New()
+	if err != nil {
+		return err
+	}
 	// Ensure secrets file
-	_, err := os.Stat(SecretFile)
+	_, err = os.Stat(SecretFile)
 	if err == nil {
 		if err := os.Remove(SecretFile); err != nil {
 			return err
@@ -103,6 +110,8 @@ func (l *libreswan) Apply(network *types.Network, routeDriverMTUFn func(*types.N
 		return l.Cleanup()
 	}
 
+	centralGw := findCentralGw(network)
+
 	// remove unwanted connections
 	for connName := range l.connections {
 		if _, ok := desiredConnections[connName]; !ok {
@@ -113,6 +122,9 @@ func (l *libreswan) Apply(network *types.Network, routeDriverMTUFn func(*types.N
 				continue
 			}
 			delete(l.connections, connName)
+			if centralGw.NodeName == l.nodeName {
+				errList = errList.Append(l.deleteRavenSkipNAT(centralGw, l.connections[connName]))
+			}
 		}
 	}
 
@@ -120,6 +132,10 @@ func (l *libreswan) Apply(network *types.Network, routeDriverMTUFn func(*types.N
 	for name, connection := range desiredConnections {
 		err := l.connectToEndpoint(name, connection)
 		errList = errList.Append(err)
+		if centralGw.NodeName == l.nodeName {
+			err = l.ensureRavenSkipNAT(centralGw, connection)
+			errList = errList.Append(err)
+		}
 	}
 
 	return errList.AsError()
@@ -225,6 +241,44 @@ func (l *libreswan) whackConnectToEndpoint(connectionName string, connection *vp
 	return nil
 }
 
+func (l *libreswan) ensureRavenSkipNAT(centralGw *types.Endpoint, connection *vpndriver.Connection) errorlist.List {
+	errList := errorlist.List{}
+	// for raven skip nat
+	if err := l.iptables.NewChainIfNotExist(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain); err != nil {
+		errList = errList.Append(fmt.Errorf("error create %s chain: %s", iptablesutil.RavenPostRoutingChain, err))
+	}
+	if err := l.iptables.InsertIfNotExists(iptablesutil.NatTable, iptablesutil.PostRoutingChain, 1, "-m", "comment", "--comment", "raven traffic should skip NAT", "-j", iptablesutil.RavenPostRoutingChain); err != nil {
+		errList = errList.Append(fmt.Errorf("error adding chain %s rule: %s", iptablesutil.PostRoutingChain, err))
+	}
+	for _, subnet := range centralGw.Subnets {
+		if connection.LocalSubnet == subnet || connection.RemoteSubnet == subnet {
+			return errList
+		}
+	}
+	if err := l.iptables.AppendIfNotExists(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain, "-s", connection.LocalSubnet, "-d", connection.RemoteSubnet, "-j", "ACCEPT"); err != nil {
+		errList = errList.Append(fmt.Errorf("error adding chain %s rule: %s", iptablesutil.RavenPostRoutingChain, err))
+	}
+	return errList
+}
+
+func (l *libreswan) deleteRavenSkipNAT(centralGw *types.Endpoint, connection *vpndriver.Connection) errorlist.List {
+	errList := errorlist.List{}
+	err := l.iptables.NewChainIfNotExist(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain)
+	if err != nil {
+		errList = errList.Append(fmt.Errorf("error create %s chain: %s", iptablesutil.PostRoutingChain, err))
+	}
+	for _, subnet := range centralGw.Subnets {
+		if connection.LocalSubnet == subnet || connection.RemoteSubnet == subnet {
+			return errList
+		}
+	}
+	err = l.iptables.DeleteIfExists(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain, "-s", connection.LocalSubnet, "-d", connection.RemoteSubnet, "-j", "ACCEPT")
+	if err != nil {
+		errList = errList.Append(fmt.Errorf("error deleting %s chain rule: %s", iptablesutil.RavenPostRoutingChain, err))
+	}
+	return errList
+}
+
 func (l *libreswan) computeDesiredConnections(network *types.Network) map[string]*vpndriver.Connection {
 	centralGw := findCentralGw(network)
 	resolveEndpoint := l.getEndpointResolver(network)
@@ -286,6 +340,19 @@ func (l *libreswan) Cleanup() error {
 	l.connections = make(map[string]*vpndriver.Connection)
 	err := netlinkutil.XfrmPolicyFlush()
 	errList = errList.Append(err)
+
+	err = l.iptables.NewChainIfNotExist(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain)
+	if err != nil {
+		errList = errList.Append(fmt.Errorf("error create %s chain: %s", iptablesutil.PostRoutingChain, err))
+	}
+	err = l.iptables.DeleteIfExists(iptablesutil.NatTable, iptablesutil.PostRoutingChain, "-m", "comment", "--comment", "raven traffic should skip NAT", "-j", iptablesutil.RavenPostRoutingChain)
+	if err != nil {
+		errList = errList.Append(fmt.Errorf("error deleting %s chain rule: %s", iptablesutil.PostRoutingChain, err))
+	}
+	err = l.iptables.ClearAndDeleteChain(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain)
+	if err != nil {
+		errList = errList.Append(fmt.Errorf("error deleting %s chain %s", iptablesutil.RavenPostRoutingChain, err))
+	}
 	return errList.AsError()
 }
 
