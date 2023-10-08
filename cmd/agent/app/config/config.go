@@ -24,12 +24,32 @@ import (
 // Config is the main context object for raven agent
 type Config struct {
 	NodeName           string
-	Kubeconfig         *rest.Config
-	Manager            manager.Manager
-	VPNDriver          string
-	RouteDriver        string
-	ForwardNodeIP      bool
+	NodeIP             string
 	MetricsBindAddress string
+	KubeConfig         *rest.Config
+	Manager            manager.Manager
+	Tunnel             *TunnelConfig
+	Proxy              *ProxyConfig
+}
+
+type TunnelConfig struct {
+	VPNDriver     string
+	VPNPort       string
+	RouteDriver   string
+	ForwardNodeIP bool
+}
+
+type ProxyConfig struct {
+	ProxyMetricsAddress string
+	ProxyClientCertDir  string
+
+	InternalInsecureAddress  string
+	InternalSecureAddress    string
+	ExternalAddress          string
+	ProxyServerCertDNSNames  string
+	ProxyServerCertIPs       string
+	ProxyServerCertDir       string
+	InterceptorServerUDSFile string
 }
 
 type completedConfig struct {

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1alpha1"
+	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/pkg/types"
@@ -103,9 +103,9 @@ func TestFindCentralGwFn(t *testing.T) {
 			PrivateIP: "192.168.1.1",
 			UnderNAT:  false,
 		},
-		LocalNodeInfo:   make(map[types.NodeName]*v1alpha1.NodeInfo),
+		LocalNodeInfo:   make(map[types.NodeName]*v1beta1.NodeInfo),
 		RemoteEndpoints: make(map[types.GatewayName]*types.Endpoint),
-		RemoteNodeInfo:  make(map[types.NodeName]*v1alpha1.NodeInfo),
+		RemoteNodeInfo:  make(map[types.NodeName]*v1beta1.NodeInfo),
 	}
 
 	tests := []struct {

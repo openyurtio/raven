@@ -23,9 +23,10 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"strconv"
 	"time"
 
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1alpha1"
+	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
 	"github.com/pkg/errors"
 	"github.com/vdobler/ht/errorlist"
 	"github.com/vishvananda/netlink"
@@ -57,8 +58,8 @@ const (
 
 	// DeviceName specifies name of WireGuard network device.
 	DeviceName = "raven-wg0"
-	// ListenPort specifies port of WireGuard listened.
-	ListenPort = 4500
+	// DefaultListenPort specifies port of WireGuard listened.
+	DefaultListenPort = 4500
 )
 
 var findCentralGw = vpndriver.FindCentralGwFn
@@ -80,13 +81,19 @@ type wireguard struct {
 	iptables             iptablesutil.IPTablesInterface
 	nodeName             types.NodeName
 	ravenClient          client.Client
+	listenPort           int
 }
 
 func New(cfg *config.Config) (vpndriver.Driver, error) {
+	port, err := strconv.Atoi(cfg.Tunnel.VPNPort)
+	if err != nil {
+		port = DefaultListenPort
+	}
 	return &wireguard{
 		connections: make(map[string]*vpndriver.Connection),
 		nodeName:    types.NodeName(cfg.NodeName),
 		ravenClient: cfg.Manager.GetClient(),
+		listenPort:  port,
 	}, nil
 }
 
@@ -127,7 +134,7 @@ func (w *wireguard) Init() error {
 
 func (w *wireguard) isWgDeviceChanged(existing, desired netlink.Link) bool {
 	if d, err := w.wgClient.Device(DeviceName); err == nil {
-		if d.ListenPort == ListenPort && reflect.DeepEqual(d.PrivateKey, w.privateKey) {
+		if d.ListenPort == w.listenPort && reflect.DeepEqual(d.PrivateKey, w.privateKey) {
 			return false
 		}
 	}
@@ -183,7 +190,7 @@ func (w *wireguard) ensureWgLink(network *types.Network, routeDriverMTUFn func(*
 		return fmt.Errorf("failed to add WireGuard device: %v", err)
 	}
 
-	port := ListenPort
+	port := w.listenPort
 	// Init Configure the device.
 	peerConfigs := make([]wgtypes.PeerConfig, 0)
 	cfg := wgtypes.Config{
@@ -298,7 +305,7 @@ func (w *wireguard) Apply(network *types.Network, routeDriverMTUFn func(*types.N
 			allowedIPs = append(allowedIPs, parseSubnets(centralAllowedIPs)...)
 		}
 
-		remotePort := ListenPort
+		remotePort := w.listenPort
 		ka := KeepAliveInterval
 		peerConfigs = append(peerConfigs, wgtypes.PeerConfig{
 			PublicKey:    *newKey,
@@ -478,7 +485,7 @@ func (w *wireguard) removePeer(key *wgtypes.Key) error {
 func (w *wireguard) configGatewayPublicKey(gwName string, nodeName string) error {
 	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		// get localGateway from api server
-		var apiGw v1alpha1.Gateway
+		var apiGw v1beta1.Gateway
 		err := w.ravenClient.Get(context.Background(), client.ObjectKey{
 			Name: gwName,
 		}, &apiGw)
@@ -486,7 +493,7 @@ func (w *wireguard) configGatewayPublicKey(gwName string, nodeName string) error
 			return err
 		}
 		for k, v := range apiGw.Spec.Endpoints {
-			if v.NodeName == nodeName {
+			if v.NodeName == nodeName && v.Type == v1beta1.Tunnel {
 				if apiGw.Spec.Endpoints[k].Config == nil {
 					apiGw.Spec.Endpoints[k].Config = make(map[string]string)
 				}

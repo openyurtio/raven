@@ -20,15 +20,14 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/spf13/cobra"
+	"github.com/lorenzosaino/go-sysctl"
 	"k8s.io/klog/v2"
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/cmd/agent/app/options"
+	ravenengine "github.com/openyurtio/raven/pkg/engine"
 	"github.com/openyurtio/raven/pkg/features"
-	"github.com/openyurtio/raven/pkg/k8s"
-	"github.com/openyurtio/raven/pkg/networkengine/routedriver"
-	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
+	"github.com/spf13/cobra"
 )
 
 // NewRavenAgentCommand creates a new raven agent command
@@ -59,38 +58,29 @@ func NewRavenAgentCommand(ctx context.Context) *cobra.Command {
 
 // Run starts the raven-agent
 func Run(ctx context.Context, cfg *config.CompletedConfig) error {
-	routeDriver, err := routedriver.New(cfg.RouteDriver, cfg.Config)
-	if err != nil {
-		return fmt.Errorf("fail to create route driver: %s, %s", cfg.RouteDriver, err)
+	klog.Info("Start raven agent")
+	defer klog.Info("Stop raven agent")
+	if err := disableICMPRedirect(); err != nil {
+		return err
 	}
-	err = routeDriver.Init()
+	engine := ravenengine.NewEngine(ctx, cfg.Config)
+	engine.Start()
+	return nil
+}
+
+func disableICMPRedirect() error {
+	obj := "net.ipv4.conf.all.send_redirects"
+	val, err := sysctl.Get(obj)
 	if err != nil {
-		return fmt.Errorf("fail to initialize route driver: %s, %s", cfg.RouteDriver, err)
+		klog.ErrorS(err, "failed to sysctl get", obj)
+		return err
 	}
-	klog.Infof("route driver %s initialized", cfg.RouteDriver)
-	vpnDriver, err := vpndriver.New(cfg.VPNDriver, cfg.Config)
-	if err != nil {
-		return fmt.Errorf("fail to create vpn driver: %s, %s", cfg.VPNDriver, err)
-	}
-	err = vpnDriver.Init()
-	if err != nil {
-		return fmt.Errorf("fail to initialize vpn driver: %s, %s", cfg.VPNDriver, err)
-	}
-	klog.Infof("VPN driver %s initialized", cfg.VPNDriver)
-	// start network engine controller
-	ec, err := k8s.NewEngineController(cfg.NodeName, cfg.ForwardNodeIP, routeDriver, cfg.Manager, vpnDriver)
-	if err != nil {
-		return fmt.Errorf("could not create network engine controller: %s", err)
-	}
-	ec.Start(ctx)
-	<-ctx.Done()
-	err = routeDriver.Cleanup()
-	if err != nil {
-		klog.Errorf("route driver fail to cleanup: %s", err)
-	}
-	err = vpnDriver.Cleanup()
-	if err != nil {
-		klog.Errorf("vpn driver fail to cleanup: %s", err)
+	if val != "0" {
+		err = sysctl.Set(obj, "0")
+		if err != nil {
+			klog.ErrorS(err, "failed to sysctl set", obj)
+			return err
+		}
 	}
 	return nil
 }

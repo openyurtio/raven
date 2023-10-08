@@ -17,7 +17,7 @@
 package types
 
 import (
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1alpha1"
+	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
 )
 
 // GatewayName is the type representing the name of Gateway.
@@ -64,12 +64,12 @@ type Network struct {
 	// Equals to nil if there is no local gateway node.
 	LocalEndpoint *Endpoint
 	// LocalNodeInfo stores NodeInfo of all nodes in local gateway.
-	LocalNodeInfo map[NodeName]*v1alpha1.NodeInfo
+	LocalNodeInfo map[NodeName]*v1beta1.NodeInfo
 	// RemoteEndpoints is the Endpoint of all remote gateway nodes, indexed by their gateway name.
 	// Equals to nil if there is no remote gateway node.
 	RemoteEndpoints map[GatewayName]*Endpoint
 	// RemoteNodeInfo stores NodeInfo of all nodes in remote gateways
-	RemoteNodeInfo map[NodeName]*v1alpha1.NodeInfo
+	RemoteNodeInfo map[NodeName]*v1beta1.NodeInfo
 }
 
 func (n *Network) Copy() *Network {
@@ -78,9 +78,9 @@ func (n *Network) Copy() *Network {
 	}
 	nw := &Network{
 		LocalEndpoint:   n.LocalEndpoint.Copy(),
-		LocalNodeInfo:   make(map[NodeName]*v1alpha1.NodeInfo),
+		LocalNodeInfo:   make(map[NodeName]*v1beta1.NodeInfo),
 		RemoteEndpoints: make(map[GatewayName]*Endpoint),
-		RemoteNodeInfo:  make(map[NodeName]*v1alpha1.NodeInfo),
+		RemoteNodeInfo:  make(map[NodeName]*v1beta1.NodeInfo),
 	}
 	for k, v := range n.RemoteEndpoints {
 		nw.RemoteEndpoints[k] = v.Copy()
