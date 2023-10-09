@@ -17,7 +17,7 @@ ARG TARGETOS
 ARG TARGETARCH
 
 # Build
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=on go build -a -o agent cmd/agent/main.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=on go build -a -o raven-agent-ds cmd/agent/main.go
 
 
 FROM alpine:3.17
@@ -30,7 +30,8 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
     && touch /run/openrc/softlevel \
     && rc-update add ipsec
 
-COPY --from=builder /workspace/agent /usr/local/bin/
+COPY --from=builder /workspace/raven-agent-ds /usr/local/bin/
 COPY pluto raven.sh /usr/local/bin/
 
 ENTRYPOINT raven.sh
+ENTRYPOINT ["/usr/local/bin/raven-agent-ds"]

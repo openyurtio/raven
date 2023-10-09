@@ -19,6 +19,3 @@ set -e -x
 
 # disable icmp redirect
 [ "$(cat /proc/sys/net/ipv4/conf/all/send_redirects)" = 0 ] || echo 0 > /proc/sys/net/ipv4/conf/all/send_redirects
-
-# run raven agent
-exec agent --node-name="$NODE_NAME" --vpn-driver="$VPN_DRIVER" --forward-node-ip="$FORWARD_NODE_IP" --metric-bind-addr="$METRIC_BIND_ADDR" --feature-gates="$FEATURE_GATES"
