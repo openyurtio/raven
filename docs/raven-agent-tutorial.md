@@ -18,6 +18,8 @@ Suppose you have an edge kubernetes cluster with nodes in different physical reg
 
 ```helm upgrade --install raven-agent -n kube-system openyurt/raven-agent```
 
+Note: If you use `Calico` as a CNI plugin, you should set `iptablesMangleAllowAction` to `return`, making raven rule in `PREROUTING` take effect. For more information, see `Calico`'s [Felix configuration](https://docs.tigera.io/calico/latest/reference/resources/felixconfig).
+
 ## Label nodes in different physical regions
 
 As follows, suppose the cluster has five nodes, located in three different regions, where the node `master` is cloud node.
@@ -236,3 +238,9 @@ spec:
     - nodeName: master
       underNAT: false
 ```
+
+## Common Issues
+
+If you encounter any problems during the installation of Raven, you can first refer to the following list of common issues.
+
+- To resolve iptables rule conflicts between `Calico` and `Raven`, see [this issue](https://github.com/openyurtio/raven/issues/136).
