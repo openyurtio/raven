@@ -31,7 +31,6 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
     && rc-update add ipsec
 
 COPY --from=builder /workspace/raven-agent-ds /usr/local/bin/
-COPY pluto raven.sh /usr/local/bin/
+COPY pluto /usr/local/bin/
 
-ENTRYPOINT raven.sh
-ENTRYPOINT ["/usr/local/bin/raven-agent-ds"]
+ENTRYPOINT  ["/usr/local/bin/raven-agent-ds"]

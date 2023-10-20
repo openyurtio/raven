@@ -22,14 +22,14 @@ import (
 	"time"
 
 	"k8s.io/apiserver/pkg/server"
+	"k8s.io/klog/v2"
 
 	"github.com/openyurtio/raven/cmd/agent/app"
-	_ "github.com/openyurtio/raven/pkg/networkengine/routedriver/vxlan"
-	_ "github.com/openyurtio/raven/pkg/networkengine/vpndriver/libreswan"
-	_ "github.com/openyurtio/raven/pkg/networkengine/vpndriver/wireguard"
 )
 
 func main() {
+	klog.InitFlags(nil)
+	defer klog.Flush()
 	rand.Seed(time.Now().UnixNano())
 	cmd := app.NewRavenAgentCommand(server.SetupSignalContext())
 	cmd.Flags().AddGoFlagSet(flag.CommandLine)

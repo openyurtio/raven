@@ -24,17 +24,18 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1alpha1"
 	"github.com/vdobler/ht/errorlist"
 	"github.com/vishvananda/netlink"
 	"k8s.io/klog/v2"
 
+	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/pkg/networkengine/routedriver"
 	networkutil "github.com/openyurtio/raven/pkg/networkengine/util"
 	ipsetutil "github.com/openyurtio/raven/pkg/networkengine/util/ipset"
 	iptablesutil "github.com/openyurtio/raven/pkg/networkengine/util/iptables"
 	"github.com/openyurtio/raven/pkg/types"
+	"github.com/openyurtio/raven/pkg/utils"
 )
 
 const (
@@ -73,11 +74,11 @@ type vxlan struct {
 
 func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error)) (err error) {
 	if network.LocalEndpoint == nil || len(network.RemoteEndpoints) == 0 {
-		klog.Info("no local gateway or remote gateway is found, cleaning up route setting")
+		klog.Info(utils.FormatTunnel("no local gateway or remote gateway is found, cleaning up route setting"))
 		return vx.Cleanup()
 	}
 	if len(network.LocalNodeInfo) == 1 {
-		klog.Infof("only gateway node exist in current gateway, cleaning up route setting")
+		klog.Infof(utils.FormatTunnel("only gateway node exist in current gateway, cleaning up route setting"))
 		return vx.Cleanup()
 	}
 
@@ -211,7 +212,7 @@ func (vx *vxlan) MTU(network *types.Network) (int, error) {
 }
 
 // nodeInfo returns node info of the current node.
-func (vx *vxlan) nodeInfo(network *types.Network) *v1alpha1.NodeInfo {
+func (vx *vxlan) nodeInfo(network *types.Network) *v1beta1.NodeInfo {
 	return network.LocalNodeInfo[vx.nodeName]
 }
 

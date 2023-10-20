@@ -30,7 +30,6 @@ securityContext:
   privileged: true
 
 nodeSelector:
-  kubernetes.io/arch: amd64
   kubernetes.io/os: linux
 
 tolerations: [{"operator": "Exists"}]
@@ -50,6 +49,10 @@ containerEnv:
       valueFrom:
         fieldRef:
           fieldPath: spec.nodeName
+    - name: NODE_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.hostIP
     - name: VPN_CONNECTION_PSK
       valueFrom:
         secretKeyRef:
@@ -70,6 +73,26 @@ containerEnv:
         configMapKeyRef:
           key: metric-bind-addr
           name: raven-agent-config
+    - name: VPN_BIND_ADDRESS
+      valueFrom:
+        configMapKeyRef:
+          key: tunnel-bind-addr
+          name: raven-agent-config
+    - name: PROXY_SERVER_INTERNAL_SECURE_ADDRESS
+      valueFrom:
+        configMapKeyRef:
+          key: proxy-internal-secure-addr
+          name: raven-agent-config
+    - name: PROXY_SERVER_INTERNAL_INSECURE_ADDRESS
+      valueFrom:
+        configMapKeyRef:
+          key: proxy-internal-insecure-addr
+          name: raven-agent-config
+    - name: PROXY_SERVER_EXTERNAL_ADDRESS
+      valueFrom:
+        configMapKeyRef:
+          key: proxy-external-addr
+          name: raven-agent-config
 vpn:
   driver: libreswan
   forwardNodeIP: false
@@ -79,6 +102,13 @@ vpn:
   # Pass it to helm with '--set vpn.psk=`openssl rand -hex 64`'
   # IMPORTANT: You should NOT use the example psk for a production deployment!
   psk: OPENYURT-RAVEN-AGENT-VPN-PSK
-  metricBindAddr: ":8080"
+  metricBindAddr: ":10265"
+  tunnelAddr: ":4500"
+proxy:
+  externalAddr: ":10262"
+  internalInsecureAddr: ":10264"
+  internalSecureAddr: ":10263"
+
+
 rollingUpdate:
   maxUnavailable: 5%

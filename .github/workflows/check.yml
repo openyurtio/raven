@@ -46,7 +46,7 @@ jobs:
         uses: golangci/golangci-lint-action@v3
         with:
           version: v1.51.2
-          args: --timeout 300s  --skip-dirs-use-default -v -E goconst -E gofmt -E ineffassign -E goimports -E revive -E misspell -E vet -E deadcode
+          args: --timeout 300s  --skip-dirs-use-default -v -E goconst -E gofmt -E ineffassign -E goimports -E revive -E misspell -E vet -E unused
 
   shellcheck:
     name: Shellcheck

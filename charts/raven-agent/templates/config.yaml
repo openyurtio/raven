@@ -1,8 +1,21 @@
 apiVersion: v1
 data:
+  enable-l3-tunnel: "false"
+  enable-l7-proxy: "true"
+kind: ConfigMap
+metadata:
+  name: raven-cfg
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+data:
   vpn-driver: {{ .Values.vpn.driver }}
   forward-node-ip: {{ .Values.vpn.forwardNodeIP | quote }}
   metric-bind-addr: {{ .Values.vpn.metricBindAddr }}
+  tunnel-bind-addr: {{ .Values.vpn.tunnelAddr }}
+  proxy-external-addr: {{ .Values.proxy.externalAddr }}
+  proxy-internal-insecure-addr: {{ .Values.proxy.internalInsecureAddr }}
+  proxy-internal-secure-addr: {{ .Values.proxy.internalSecureAddr }}
 kind: ConfigMap
 metadata:
   name: raven-agent-config

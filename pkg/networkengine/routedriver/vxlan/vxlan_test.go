@@ -20,10 +20,10 @@ import (
 	"net"
 	"testing"
 
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/vishvananda/netlink"
 
+	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
 	networkutil "github.com/openyurtio/raven/pkg/networkengine/util"
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
 	"github.com/openyurtio/raven/pkg/types"
@@ -368,7 +368,7 @@ func TestVxlan_Apply(t *testing.T) {
 			},
 			PrivateIP: "192.168.1.1",
 		},
-		LocalNodeInfo: map[types.NodeName]*v1alpha1.NodeInfo{
+		LocalNodeInfo: map[types.NodeName]*v1beta1.NodeInfo{
 			"node-1": {
 				NodeName:  "node-1",
 				PrivateIP: "192.168.1.1",
@@ -402,7 +402,7 @@ func TestVxlan_Apply(t *testing.T) {
 				PrivateIP: "192.168.1.3",
 			},
 		},
-		RemoteNodeInfo: map[types.NodeName]*v1alpha1.NodeInfo{
+		RemoteNodeInfo: map[types.NodeName]*v1beta1.NodeInfo{
 			"node-2": {
 				NodeName:  "node-2",
 				PrivateIP: "192.168.1.2",

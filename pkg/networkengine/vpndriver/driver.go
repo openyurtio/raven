@@ -15,7 +15,8 @@ import (
 )
 
 const (
-	DefaultPSK string = "openyurt-raven"
+	DefaultPSK     = "openyurt-raven"
+	DefaultVPNPort = "4500"
 )
 
 // Driver is the interface for VPN implementation.

@@ -20,7 +20,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1alpha1"
+	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
 )
 
 const (
@@ -102,9 +102,9 @@ func TestNCopy(t *testing.T) {
 		LocalEndpoint: &Endpoint{
 			PrivateIP: "192.168.1.1",
 		},
-		LocalNodeInfo:   make(map[NodeName]*v1alpha1.NodeInfo),
+		LocalNodeInfo:   make(map[NodeName]*v1beta1.NodeInfo),
 		RemoteEndpoints: make(map[GatewayName]*Endpoint),
-		RemoteNodeInfo:  make(map[NodeName]*v1alpha1.NodeInfo),
+		RemoteNodeInfo:  make(map[NodeName]*v1beta1.NodeInfo),
 	}
 
 	tests := []struct {

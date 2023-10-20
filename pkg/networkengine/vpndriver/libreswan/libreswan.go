@@ -31,6 +31,7 @@ import (
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
 	"github.com/openyurtio/raven/pkg/types"
+	"github.com/openyurtio/raven/pkg/utils"
 )
 
 const (
@@ -57,6 +58,7 @@ const (
 type libreswan struct {
 	connections map[string]*vpndriver.Connection
 	nodeName    types.NodeName
+	listenPort  string
 
 	iptables iptablesutil.IPTablesInterface
 }
@@ -90,23 +92,24 @@ func New(cfg *config.Config) (vpndriver.Driver, error) {
 	return &libreswan{
 		connections: make(map[string]*vpndriver.Connection),
 		nodeName:    types.NodeName(cfg.NodeName),
+		listenPort:  cfg.Tunnel.VPNPort,
 	}, nil
 }
 
 func (l *libreswan) Apply(network *types.Network, routeDriverMTUFn func(*types.Network) (int, error)) (err error) {
 	errList := errorlist.List{}
 	if network.LocalEndpoint == nil || len(network.RemoteEndpoints) == 0 {
-		klog.Info("no local gateway or remote gateway is found, cleaning vpn connections")
+		klog.Info(utils.FormatTunnel("no local gateway or remote gateway is found, cleaning vpn connections"))
 		return l.Cleanup()
 	}
 	if network.LocalEndpoint.NodeName != l.nodeName {
-		klog.Infof("the current node is not gateway node, cleaning vpn connections")
+		klog.Info(utils.FormatTunnel("the current node is not gateway node, cleaning vpn connections"))
 		return l.Cleanup()
 	}
 
 	desiredConnections := l.computeDesiredConnections(network)
 	if len(desiredConnections) == 0 {
-		klog.Infof("no desired connections, cleaning vpn connections")
+		klog.Info(utils.FormatTunnel("no desired connections, cleaning vpn connections"))
 		return l.Cleanup()
 	}
 
@@ -204,7 +207,7 @@ func (l *libreswan) whackConnectToEndpoint(connectionName string, connection *vp
 			"--id", leftID,
 			"--host", connection.LocalEndpoint.String(),
 			"--client", connection.LocalSubnet,
-			"--ikeport", "4500",
+			"--ikeport", l.listenPort,
 		)
 	} else {
 		args = append(args, "--psk", "--encrypt", "--forceencaps", "--name", connectionName,
@@ -219,7 +222,7 @@ func (l *libreswan) whackConnectToEndpoint(connectionName string, connection *vp
 			"--id", rightID,
 			"--host", connection.RemoteEndpoint.PublicIP,
 			"--client", connection.RemoteSubnet,
-			"--ikeport", "4500")
+			"--ikeport", l.listenPort)
 	} else {
 		args = append(args, "--to",
 			"--id", rightID,
