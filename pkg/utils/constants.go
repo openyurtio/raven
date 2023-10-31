@@ -45,4 +45,8 @@ const (
 
 	WorkingNamespace = "kube-system"
 	RavenConfigName  = "raven-cfg"
+
+	NATSymmetric = "Symmetric NAT"
+	NATPortRestricted = "Port Restricted cone NAT"
+	NATUndefined = "Undefined"
 )
