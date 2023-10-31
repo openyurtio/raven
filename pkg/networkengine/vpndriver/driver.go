@@ -12,6 +12,7 @@ import (
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
 	"github.com/openyurtio/raven/pkg/types"
+	"github.com/openyurtio/raven/pkg/utils"
 )
 
 const (
@@ -92,6 +93,19 @@ func FindCentralGwFn(network *types.Network) *types.Endpoint {
 		}
 	}
 	return central
+}
+
+// EnableCreateEdgeConnection determine whether VPN tunnels can be established between edges.
+func EnableCreateEdgeConnection(localEndpoint *types.Endpoint, remoteEndpoint *types.Endpoint) bool {
+	if localEndpoint.NATType == utils.NATUndefined || remoteEndpoint.NATType == utils.NATUndefined {
+		return false
+	}
+	if !localEndpoint.UnderNAT || !remoteEndpoint.UnderNAT {
+		return false
+	}
+	return !((localEndpoint.NATType == utils.NATSymmetric && remoteEndpoint.NATType == utils.NATSymmetric) ||
+		(localEndpoint.NATType == utils.NATSymmetric && remoteEndpoint.NATType == utils.NATPortRestricted) ||
+		(localEndpoint.NATType == utils.NATPortRestricted && remoteEndpoint.NATType == utils.NATSymmetric))
 }
 
 func DefaultMTU() (int, error) {
