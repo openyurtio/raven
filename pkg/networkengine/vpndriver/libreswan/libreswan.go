@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -57,9 +58,11 @@ const (
 )
 
 type libreswan struct {
-	connections map[string]*vpndriver.Connection
-	nodeName    types.NodeName
-	listenPort  string
+	relayConnections map[string]*vpndriver.Connection
+	edgeConnections  map[string]*vpndriver.Connection
+	nodeName         types.NodeName
+	listenPort       string
+	centralGw        *types.Endpoint
 
 	iptables iptablesutil.IPTablesInterface
 }
@@ -91,9 +94,10 @@ func (l *libreswan) Init() (err error) {
 
 func New(cfg *config.Config) (vpndriver.Driver, error) {
 	return &libreswan{
-		connections: make(map[string]*vpndriver.Connection),
-		nodeName:    types.NodeName(cfg.NodeName),
-		listenPort:  cfg.Tunnel.VPNPort,
+		relayConnections: make(map[string]*vpndriver.Connection),
+		edgeConnections:  make(map[string]*vpndriver.Connection),
+		nodeName:         types.NodeName(cfg.NodeName),
+		listenPort:       cfg.Tunnel.VPNPort,
 	}, nil
 }
 
@@ -122,97 +126,205 @@ func (l *libreswan) MTU() (int, error) {
 	return mtu - IPSecEncapLen, nil
 }
 
+// getEndpointResolver returns a function that resolve the left subnets and the Endpoint that should connect to.
+func (l *libreswan) getEndpointResolver(network *types.Network) func(centralGw, remoteGw *types.Endpoint) (leftSubnets []string, connectTo *types.Endpoint) {
+	snUnderNAT := make(map[types.GatewayName]*types.Endpoint)
+	for _, v := range network.RemoteEndpoints {
+		if v.UnderNAT {
+			snUnderNAT[v.GatewayName] = v
+		}
+	}
+	return func(centralGw, remoteGw *types.Endpoint) (leftSubnets []string, connectTo *types.Endpoint) {
+		leftSubnets = network.LocalEndpoint.Subnets
+		if centralGw == nil {
+			// If both local and remote gateway are NATed but no central gateway found,
+			// we cannot set up vpn connections between the local and remote gateway.
+			if network.LocalEndpoint.UnderNAT && remoteGw.UnderNAT {
+				return nil, nil
+			}
+			return leftSubnets, remoteGw
+		}
+
+		if centralGw.NodeName == l.nodeName {
+			if remoteGw.UnderNAT {
+				// If the local gateway is the central gateway,
+				// in order to forward traffic from other NATed gateway to the NATed remoteGw,
+				// append all subnets of other NATed gateways into left subnets.
+				for gwName, v := range snUnderNAT {
+					if gwName != remoteGw.GatewayName {
+						if !enableCreateEdgeConnection(v, remoteGw) {
+							leftSubnets = append(leftSubnets, v.Subnets...)
+						}
+					}
+				}
+			}
+			return leftSubnets, remoteGw
+		}
+
+		// If both local and remote are NATed, and the local gateway is not the central gateway,
+		// and can't create edge to edge tunnel, connects to central gateway to forward traffic.
+		if network.LocalEndpoint.UnderNAT && remoteGw.UnderNAT {
+			if !enableCreateEdgeConnection(network.LocalEndpoint, remoteGw) {
+				return leftSubnets, centralGw
+			}
+		}
+
+		return leftSubnets, remoteGw
+	}
+}
+
 func (l *libreswan) createConnections(network *types.Network) error {
-	errList := errorlist.List{}
-	desiredConnections := l.computeDesiredConnections(network)
-	if len(desiredConnections) == 0 {
+	l.centralGw = findCentralGw(network)
+	desiredEdgeConns, desiredRelayConns := l.computeDesiredConnections(network)
+	if len(desiredEdgeConns) == 0 && len(desiredRelayConns) == 0 {
 		klog.Infof(utils.FormatTunnel("no desired connections, cleaning vpn connections"))
-		l.Cleanup()
+		return l.Cleanup()
+	}
+
+	klog.Infof(utils.FormatTunnel("desired edge connections: %+v, desired relay connections: %+v", desiredEdgeConns, desiredRelayConns))
+
+	if err := l.createEdgeConnections(desiredEdgeConns); err != nil {
+		return err
+	}
+	if err := l.createRelayConnections(desiredRelayConns); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (l *libreswan) createEdgeConnections(desiredEdgeConns map[string]*vpndriver.Connection) error {
+	if len(desiredEdgeConns) == 0 {
+		klog.Infof("no desired edge connections")
 		return nil
 	}
 
+	errList := errorlist.List{}
+
 	// remove unwanted connections
-	for connName := range l.connections {
-		if _, ok := desiredConnections[connName]; !ok {
+	for connName := range l.edgeConnections {
+		if _, ok := desiredEdgeConns[connName]; !ok {
 			err := l.whackDelConnection(connName)
 			if err != nil {
 				errList = errList.Append(err)
 				klog.ErrorS(err, "error disconnecting endpoint", "connectionName", connName)
 				continue
 			}
-			delete(l.connections, connName)
+			delete(l.edgeConnections, connName)
 		}
 	}
 
 	// add new connections
-	for name, connection := range desiredConnections {
-		err := l.connectToEndpoint(name, connection)
+	for name, connection := range desiredEdgeConns {
+		err := l.connectToEdgeEndpoint(name, connection)
 		errList = errList.Append(err)
 	}
 
 	return errList.AsError()
 }
 
-func (l *libreswan) computeDesiredConnections(network *types.Network) map[string]*vpndriver.Connection {
-	centralGw := findCentralGw(network)
-	// This is the desired connection calculated from given *types.Network
-	desiredConns := make(map[string]*vpndriver.Connection)
+func (l *libreswan) createRelayConnections(desiredRelayConns map[string]*vpndriver.Connection) error {
+	if len(desiredRelayConns) == 0 {
+		klog.Infof("no desired relay connections")
+		return nil
+	}
+
+	errList := errorlist.List{}
+
+	// remove unwanted connections
+	for connName := range l.relayConnections {
+		if _, ok := desiredRelayConns[connName]; !ok {
+			err := l.whackDelConnection(connName)
+			if err != nil {
+				errList = errList.Append(err)
+				klog.ErrorS(err, "error disconnecting endpoint", "connectionName", connName)
+				continue
+			}
+			if l.centralGw.NodeName == l.nodeName {
+				errList = errList.Append(l.deleteRavenSkipNAT(l.relayConnections[connName]))
+			}
+			delete(l.relayConnections, connName)
+		}
+	}
+
+	// add new connections
+	for name, connection := range desiredRelayConns {
+		err := l.connectToEndpoint(name, connection)
+		errList = errList.Append(err)
+		if l.centralGw.NodeName == l.nodeName {
+			err = l.ensureRavenSkipNAT(connection)
+			errList = errList.Append(err)
+		}
+	}
+
+	return errList.AsError()
+}
+
+func (l *libreswan) ensureRavenSkipNAT(connection *vpndriver.Connection) errorlist.List {
+	errList := errorlist.List{}
+	for _, subnet := range l.centralGw.Subnets {
+		if connection.LocalSubnet == subnet || connection.RemoteSubnet == subnet {
+			return errList
+		}
+	}
+	// for raven skip nat
+	if err := l.iptables.NewChainIfNotExist(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain); err != nil {
+		errList = errList.Append(fmt.Errorf("error create %s chain: %s", iptablesutil.RavenPostRoutingChain, err))
+	}
+	if err := l.iptables.InsertIfNotExists(iptablesutil.NatTable, iptablesutil.PostRoutingChain, 1, "-m", "comment", "--comment", "raven traffic should skip NAT", "-j", iptablesutil.RavenPostRoutingChain); err != nil {
+		errList = errList.Append(fmt.Errorf("error adding chain %s rule: %s", iptablesutil.PostRoutingChain, err))
+	}
+	if err := l.iptables.AppendIfNotExists(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain, "-s", connection.LocalSubnet, "-d", connection.RemoteSubnet, "-j", "ACCEPT"); err != nil {
+		errList = errList.Append(fmt.Errorf("error adding chain %s rule: %s", iptablesutil.RavenPostRoutingChain, err))
+	}
+	return errList
+}
+
+func (l *libreswan) deleteRavenSkipNAT(connection *vpndriver.Connection) errorlist.List {
+	errList := errorlist.List{}
+	err := l.iptables.NewChainIfNotExist(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain)
+	if err != nil {
+		errList = errList.Append(fmt.Errorf("error create %s chain: %s", iptablesutil.PostRoutingChain, err))
+	}
+	for _, subnet := range l.centralGw.Subnets {
+		if connection.LocalSubnet == subnet || connection.RemoteSubnet == subnet {
+			return errList
+		}
+	}
+	err = l.iptables.DeleteIfExists(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain, "-s", connection.LocalSubnet, "-d", connection.RemoteSubnet, "-j", "ACCEPT")
+	if err != nil {
+		errList = errList.Append(fmt.Errorf("error deleting %s chain rule: %s", iptablesutil.RavenPostRoutingChain, err))
+	}
+	return errList
+}
+
+func (l *libreswan) computeDesiredConnections(network *types.Network) (map[string]*vpndriver.Connection, map[string]*vpndriver.Connection) {
+	desiredEdgeConns := make(map[string]*vpndriver.Connection)
+	desiredRelayConns := make(map[string]*vpndriver.Connection)
+	resolveEndpoint := l.getEndpointResolver(network)
 
 	leftEndpoint := network.LocalEndpoint
-	for _, remote := range network.RemoteEndpoints {
-		leftSubnets, connectTo := l.resolveEndpoint(network, centralGw, remote)
+	for _, remoteGw := range network.RemoteEndpoints {
+		leftSubnets, connectTo := resolveEndpoint(l.centralGw, remoteGw)
 		for _, leftSubnet := range leftSubnets {
-			for _, rightSubnet := range remote.Subnets {
-				name := connectionName(leftEndpoint.PrivateIP, remote.PrivateIP, leftSubnet, rightSubnet)
-				desiredConns[name] = &vpndriver.Connection{
+			for _, rightSubnet := range remoteGw.Subnets {
+				name := connectionName(leftEndpoint.PrivateIP, connectTo.PrivateIP, leftSubnet, rightSubnet)
+				connect := &vpndriver.Connection{
 					LocalEndpoint:  leftEndpoint.Copy(),
 					RemoteEndpoint: connectTo.Copy(),
 					LocalSubnet:    leftSubnet,
 					RemoteSubnet:   rightSubnet,
 				}
-			}
-		}
-	}
-
-	return desiredConns
-}
-
-func (l *libreswan) resolveEndpoint(network *types.Network, centralGw, remoteGw *types.Endpoint) (leftSubnets []string, connectTo *types.Endpoint) {
-	snUnderNAT := make(map[types.GatewayName][]string)
-	for _, v := range network.RemoteEndpoints {
-		if v.UnderNAT && !enableCreateEdgeConnection(v, remoteGw) {
-			snUnderNAT[v.GatewayName] = v.Subnets
-		}
-	}
-	leftSubnets = network.LocalEndpoint.Subnets
-	if centralGw == nil {
-		// If both local and remote gateway are NATed but no central gateway found,
-		// we cannot set up vpn connections between the local and remote gateway.
-		if network.LocalEndpoint.UnderNAT && remoteGw.UnderNAT {
-			return nil, nil
-		}
-		return leftSubnets, remoteGw
-	}
-
-	if centralGw.NodeName == l.nodeName {
-		if remoteGw.UnderNAT {
-			// If the local gateway is the central gateway,
-			// in order to forward traffic from other NATed gateway to the NATed remoteGw,
-			// append all subnets of other NATed gateways into left subnets.
-			for gwName, v := range snUnderNAT {
-				if gwName != remoteGw.GatewayName {
-					leftSubnets = append(leftSubnets, v...)
+				if enableCreateEdgeConnection(leftEndpoint.Copy(), connectTo.Copy()) {
+					desiredEdgeConns[name] = connect
+				} else {
+					desiredRelayConns[name] = connect
 				}
 			}
 		}
-		return leftSubnets, remoteGw
 	}
 
-	if !enableCreateEdgeConnection(network.LocalEndpoint, remoteGw) {
-		return leftSubnets, centralGw
-	}
-
-	return leftSubnets, remoteGw
+	return desiredEdgeConns, desiredRelayConns
 }
 
 func (l *libreswan) whackConnectToEndpoint(connectionName string, connection *vpndriver.Connection) error {
@@ -264,6 +376,39 @@ func (l *libreswan) whackConnectToEndpoint(connectionName string, connection *vp
 	return nil
 }
 
+func (l *libreswan) whackConnectToEdgeEndpoint(connectionName string, connection *vpndriver.Connection) error {
+	args := make([]string, 0)
+	leftID := fmt.Sprintf("@%s-%s-%s", connection.LocalEndpoint.PrivateIP, connection.LocalSubnet, connection.RemoteSubnet)
+	rightID := fmt.Sprintf("@%s-%s-%s", connection.RemoteEndpoint.PrivateIP, connection.RemoteSubnet, connection.LocalSubnet)
+
+	if err := whackCmd("--delete", "--name", connectionName); err != nil {
+		return err
+	}
+	// local
+	args = append(args, "--psk", "--encrypt", "--forceencaps", "--name", connectionName,
+		"--id", leftID,
+		"--host", connection.LocalEndpoint.String(),
+		"--client", connection.LocalSubnet)
+	// remote
+	args = append(args, "--to",
+		"--id", rightID,
+		"--host", connection.RemoteEndpoint.PublicIP,
+		"--client", connection.RemoteSubnet,
+		"--ikeport", strconv.Itoa(connection.RemoteEndpoint.PublicPort))
+
+	if err := whackCmd(args...); err != nil {
+		return err
+	}
+	if err := whackCmd("--route", "--name", connectionName); err != nil {
+		return err
+	}
+	if err := whackCmd("--initiate", "--asynchronous", "--name", connectionName); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func whackCmdFn(args ...string) error {
 	var err error
 	var output []byte
@@ -292,13 +437,23 @@ func connectionName(localID, remoteID, leftSubnet, rightSubnet string) string {
 
 func (l *libreswan) Cleanup() error {
 	errList := errorlist.List{}
-	for name := range l.connections {
+	for name := range l.relayConnections {
+		if err := l.whackDelConnection(name); err != nil {
+			errList = errList.Append(err)
+			klog.ErrorS(err, "fail to delete connection", "connectionName", name)
+		}
+		if l.centralGw != nil && l.centralGw.NodeName == l.nodeName {
+			errList = errList.Append(l.deleteRavenSkipNAT(l.relayConnections[name]))
+		}
+	}
+	for name := range l.edgeConnections {
 		if err := l.whackDelConnection(name); err != nil {
 			errList = errList.Append(err)
 			klog.ErrorS(err, "fail to delete connection", "connectionName", name)
 		}
 	}
-	l.connections = make(map[string]*vpndriver.Connection)
+	l.relayConnections = make(map[string]*vpndriver.Connection)
+	l.edgeConnections = make(map[string]*vpndriver.Connection)
 	err := netlinkutil.XfrmPolicyFlush()
 	errList = errList.Append(err)
 
@@ -353,7 +508,7 @@ func (l *libreswan) runPluto() error {
 
 func (l *libreswan) connectToEndpoint(name string, connection *vpndriver.Connection) errorlist.List {
 	errList := errorlist.List{}
-	if _, ok := l.connections[name]; ok {
+	if _, ok := l.relayConnections[name]; ok {
 		klog.InfoS("skipping connect because connection already exists", "connectionName", name)
 		return errList
 	}
@@ -363,6 +518,22 @@ func (l *libreswan) connectToEndpoint(name string, connection *vpndriver.Connect
 		klog.ErrorS(err, "error connect connection", "connectionName", name)
 		return errList
 	}
-	l.connections[name] = connection
+	l.relayConnections[name] = connection
+	return errList
+}
+
+func (l *libreswan) connectToEdgeEndpoint(name string, connection *vpndriver.Connection) errorlist.List {
+	errList := errorlist.List{}
+	if _, ok := l.edgeConnections[name]; ok {
+		klog.InfoS("skipping connect because connection already exists", "connectionName", name)
+		return errList
+	}
+	err := l.whackConnectToEdgeEndpoint(name, connection)
+	if err != nil {
+		errList = errList.Append(err)
+		klog.ErrorS(err, "error connect connection", "connectionName", name)
+		return errList
+	}
+	l.edgeConnections[name] = connection
 	return errList
 }

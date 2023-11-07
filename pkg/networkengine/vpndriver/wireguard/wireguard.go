@@ -41,6 +41,7 @@ import (
 	iptablesutil "github.com/openyurtio/raven/pkg/networkengine/util/iptables"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
 	"github.com/openyurtio/raven/pkg/types"
+	"github.com/openyurtio/raven/pkg/utils"
 )
 
 const (
@@ -95,7 +96,7 @@ func New(cfg *config.Config) (vpndriver.Driver, error) {
 		edgeConnections:  make(map[string]*vpndriver.Connection),
 		nodeName:         types.NodeName(cfg.NodeName),
 		ravenClient:      cfg.Manager.GetClient(),
-		listenPort:  port,
+		listenPort:       port,
 	}, nil
 }
 
@@ -218,9 +219,10 @@ func (w *wireguard) createConnections(network *types.Network) error {
 	desiredEdgeConns, desiredRelayConns, centralAllowedIPs := w.computeDesiredConnections(network)
 	if len(desiredEdgeConns) == 0 && len(desiredRelayConns) == 0 {
 		klog.Infof("no desired connections, cleaning vpn connections")
-		w.Cleanup()
-		return nil
+		return w.Cleanup()
 	}
+
+	klog.Infof(utils.FormatTunnel("desired edge connections: %+v, desired relay connections: %+v", desiredEdgeConns, desiredRelayConns))
 
 	centralGw := findCentralGw(network)
 	if err := w.createEdgeConnections(desiredEdgeConns); err != nil {
@@ -377,6 +379,13 @@ func (w *wireguard) Apply(network *types.Network, routeDriverMTUFn func(*types.N
 		return errors.New("retry to config public key")
 	}
 
+	centralGw := findCentralGw(network)
+	if centralGw.NodeName == w.nodeName {
+		if err := w.ensureRavenSkipNAT(); err != nil {
+			return fmt.Errorf("error ensure raven skip nat: %s", err)
+		}
+	}
+
 	if err := w.ensureWgLink(network, routeDriverMTUFn); err != nil {
 		return fmt.Errorf("fail to ensure wireguar link: %v", err)
 	}
@@ -439,31 +448,14 @@ func (w *wireguard) Cleanup() error {
 	if err = netlink.LinkDel(link); err != nil {
 		errList = errList.Append(fmt.Errorf("error delete existing wireguard device %q: %v", DeviceName, err))
 	}
+
+	if err = w.deleteRavenSkipNAT(); err != nil {
+		errList = errList.Append(err)
+	}
+
 	w.relayConnections = make(map[string]*vpndriver.Connection)
 	w.edgeConnections = make(map[string]*vpndriver.Connection)
 	return errList.AsError()
-}
-
-// getSubnetResolver returns a function that resolve the left subnets.
-func (w *wireguard) getSubnetResolver(network *types.Network) func(remoteGw *types.Endpoint) (leftSubnets []string) {
-	snUnderNAT := make(map[types.GatewayName][]string)
-	for _, v := range network.RemoteEndpoints {
-		if v.UnderNAT {
-			snUnderNAT[v.GatewayName] = v.Subnets
-		}
-	}
-	return func(remoteGw *types.Endpoint) (leftSubnets []string) {
-		if remoteGw.UnderNAT {
-			// In order to forward traffic from other NATed gateway to the NATed remoteGw,
-			// append all subnets of other NATed gateways into left subnets.
-			for gwName, v := range snUnderNAT {
-				if gwName != remoteGw.GatewayName {
-					leftSubnets = append(leftSubnets, v...)
-				}
-			}
-		}
-		return leftSubnets
-	}
 }
 
 func (w *wireguard) computeDesiredConnections(network *types.Network) (map[string]*vpndriver.Connection, map[string]*vpndriver.Connection, []string) {
@@ -529,7 +521,7 @@ func (w *wireguard) configGatewayPublicKey(gwName string, nodeName string) error
 			return err
 		}
 		for k, v := range apiGw.Spec.Endpoints {
-			if v.NodeName == nodeName && v.Type == v1beta1.Tunnel  {
+			if v.NodeName == nodeName && v.Type == v1beta1.Tunnel {
 				if apiGw.Spec.Endpoints[k].Config == nil {
 					apiGw.Spec.Endpoints[k].Config = make(map[string]string)
 				}
@@ -603,4 +595,33 @@ func parseSubnets(subnets []string) []net.IPNet {
 		nets = append(nets, *cidr)
 	}
 	return nets
+}
+
+func (w *wireguard) ensureRavenSkipNAT() error {
+	// for raven skip nat
+	if err := w.iptables.NewChainIfNotExist(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain); err != nil {
+		return fmt.Errorf("error create %s chain: %s", iptablesutil.RavenPostRoutingChain, err)
+	}
+	if err := w.iptables.InsertIfNotExists(iptablesutil.NatTable, iptablesutil.PostRoutingChain, 1, "-m", "comment", "--comment", "raven traffic should skip NAT", "-o", "raven-wg0", "-j", iptablesutil.RavenPostRoutingChain); err != nil {
+		return fmt.Errorf("error adding chain %s rule: %s", iptablesutil.PostRoutingChain, err)
+	}
+	if err := w.iptables.AppendIfNotExists(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain, "-j", "ACCEPT"); err != nil {
+		return fmt.Errorf("error adding chain %s rule: %s", iptablesutil.RavenPostRoutingChain, err)
+	}
+
+	return nil
+}
+
+func (w *wireguard) deleteRavenSkipNAT() error {
+	if err := w.iptables.NewChainIfNotExist(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain); err != nil {
+		return fmt.Errorf("error create %s chain: %s", iptablesutil.PostRoutingChain, err)
+	}
+	if err := w.iptables.DeleteIfExists(iptablesutil.NatTable, iptablesutil.PostRoutingChain, "-m", "comment", "--comment", "raven traffic should skip NAT", "-o", "raven-wg0", "-j", iptablesutil.RavenPostRoutingChain); err != nil {
+		return fmt.Errorf("error deleting %s chain rule: %s", iptablesutil.PostRoutingChain, err)
+	}
+	if err := w.iptables.ClearAndDeleteChain(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain); err != nil {
+		return fmt.Errorf("error deleting %s chain %s", iptablesutil.RavenPostRoutingChain, err)
+	}
+
+	return nil
 }

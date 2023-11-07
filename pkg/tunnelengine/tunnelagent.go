@@ -88,19 +88,15 @@ func (c *TunnelHandler) Handler() error {
 		// try to update public IP if empty.
 		gw := &gws.Items[i]
 		if ep := getTunnelActiveEndpoints(gw); ep != nil {
-			if ep.PublicIP == "" || ep.NATType == "" || ep.NATType != utils.NATSymmetric && ep.PublicPort == 0 {
-				// try to update public IP if empty.
+			if ep.PublicIP == "" || ep.NATType == "" || ep.PublicPort == 0 {
 				if ep.PublicIP == "" {
-					err := c.configGatewayPublicIP(gw)
-					if err != nil {
+					if err := c.configGatewayPublicIP(gw); err != nil {
 						klog.ErrorS(err, "error config gateway public ip", "gateway", klog.KObj(gw))
 					}
 				}
-				// try to update NAT type if empty
-				if ep.NATType == "" || ep.NATType != utils.NATSymmetric && ep.PublicPort == 0 {
-					err := c.configGatewayStun(gw)
-					if err != nil {
-						klog.ErrorS(err, "error config gateway nat type", "gateway", klog.KObj(gw))
+				if ep.NATType == "" || ep.PublicPort == 0 {
+					if err := c.configGatewayStunInfo(gw); err != nil {
+						klog.ErrorS(err, "error config gateway stun info", "gateway", klog.KObj(gw))
 					}
 				}
 				continue
@@ -220,9 +216,11 @@ func (c *TunnelHandler) shouldHandleGateway(gateway *v1beta1.Gateway) bool {
 	}
 	if getTunnelActiveEndpoints(gateway).NATType == "" {
 		klog.InfoS("no nat type for gateway, waiting for sync", "gateway", klog.KObj(gateway))
+		return false
 	}
 	if getTunnelActiveEndpoints(gateway).NATType != utils.NATSymmetric && getTunnelActiveEndpoints(gateway).PublicPort == 0 {
 		klog.InfoS("no public port for gateway, waiting for sync", "gateway", klog.KObj(gateway))
+		return false
 	}
 	if c.ownGateway == nil {
 		klog.InfoS(fmt.Sprintf("no own gateway for node %s, skip it", c.nodeName), "gateway", klog.KObj(gateway))
@@ -271,7 +269,7 @@ func (c *TunnelHandler) configGatewayPublicIP(gateway *v1beta1.Gateway) error {
 	return err
 }
 
-func (c *TunnelHandler) configGatewayStun(gateway *v1beta1.Gateway) error {
+func (c *TunnelHandler) configGatewayStunInfo(gateway *v1beta1.Gateway) error {
 	if getTunnelActiveEndpoints(gateway).NodeName != c.nodeName {
 		return nil
 	}
@@ -299,9 +297,7 @@ func (c *TunnelHandler) configGatewayStun(gateway *v1beta1.Gateway) error {
 		for k, v := range apiGw.Spec.Endpoints {
 			if v.NodeName == c.nodeName {
 				apiGw.Spec.Endpoints[k].NATType = natType
-				if natType != utils.NATSymmetric {
-					apiGw.Spec.Endpoints[k].PublicPort = publicPort
-				}
+				apiGw.Spec.Endpoints[k].PublicPort = publicPort
 				err = c.ravenClient.Update(context.Background(), &apiGw)
 				return err
 			}

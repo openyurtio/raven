@@ -27,6 +27,7 @@ import (
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
 	"github.com/openyurtio/raven/pkg/types"
+	"github.com/openyurtio/raven/pkg/utils"
 )
 
 type whackMock struct {
@@ -185,6 +186,7 @@ func TestLibreswan_Apply(t *testing.T) {
 					PrivateIP:   localGwIP,
 					PublicIP:    "1.1.1.1",
 					UnderNAT:    true,
+					NATType:     utils.NATSymmetric,
 				},
 				RemoteEndpoints: map[types.GatewayName]*types.Endpoint{
 					"centralGw": {
@@ -202,6 +204,7 @@ func TestLibreswan_Apply(t *testing.T) {
 						PrivateIP:   remoteGw2IP,
 						PublicIP:    "1.1.1.3",
 						UnderNAT:    true,
+						NATType:     utils.NATSymmetric,
 					},
 				},
 			},
@@ -299,6 +302,7 @@ func TestLibreswan_Apply(t *testing.T) {
 						PrivateIP:   remoteGw1IP,
 						PublicIP:    "1.1.1.2",
 						UnderNAT:    true,
+						NATType:     utils.NATSymmetric,
 					},
 					"remoteGw2": {
 						GatewayName: "remoteGw2",
@@ -307,6 +311,7 @@ func TestLibreswan_Apply(t *testing.T) {
 						PrivateIP:   remoteGw2IP,
 						PublicIP:    "1.1.1.3",
 						UnderNAT:    true,
+						NATType:     utils.NATSymmetric,
 					},
 				},
 			},
@@ -372,8 +377,9 @@ func TestLibreswan_Apply(t *testing.T) {
 			whackCmd = w.whackCmd
 			a := assert.New(t)
 			l := &libreswan{
-				connections: make(map[string]*vpndriver.Connection),
-				nodeName:    types.NodeName(v.nodeName),
+				relayConnections: make(map[string]*vpndriver.Connection),
+				edgeConnections:  make(map[string]*vpndriver.Connection),
+				nodeName:         types.NodeName(v.nodeName),
 			}
 			var err error
 			l.iptables, err = iptablesutil.New()

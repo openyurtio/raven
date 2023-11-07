@@ -97,7 +97,24 @@ func (t *TunnelEngine) clearDriver() error {
 	return nil
 }
 
+func (t *TunnelEngine) getStunInfo() error {
+	_, err := utils.GetNATType()
+	if err != nil {
+		return err
+	}
+
+	_, err = utils.GetPublicPort()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (t *TunnelEngine) reconcile() error {
+	if err := t.getStunInfo(); err != nil {
+		return err
+	}
 	if t.routeDriver == nil || t.vpnDriver == nil {
 		err := t.initDriver()
 		if err != nil {
