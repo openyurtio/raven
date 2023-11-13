@@ -17,15 +17,11 @@ limitations under the License.
 package metrics
 
 import (
-	"strings"
-
 	"github.com/prometheus/client_golang/prometheus"
-
-	"github.com/openyurtio/openyurt/pkg/projectinfo"
 )
 
 var (
-	namespace = strings.ReplaceAll(projectinfo.GetTunnelName(), "-", "_")
+	namespace = "raven_agent"
 	subsystem = "server"
 )
 

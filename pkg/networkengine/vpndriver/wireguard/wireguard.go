@@ -26,7 +26,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
+	"github.com/openyurtio/api/raven/v1beta1"
 	"github.com/pkg/errors"
 	"github.com/vdobler/ht/errorlist"
 	"github.com/vishvananda/netlink"

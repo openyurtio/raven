@@ -118,7 +118,7 @@ func NewInterceptor(udsFile string, cfg *tls.Config) http.Handler {
 			return nil, fmt.Errorf("unrecognize the proxy forwarding mode")
 		}
 		if isTLS {
-			cfg.InsecureSkipVerify = false
+			cfg.InsecureSkipVerify = true
 			tlsConn := tls.Client(conn, cfg)
 			if err := tlsConn.Handshake(); err != nil {
 				conn.Close()

@@ -18,7 +18,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
+	"github.com/openyurtio/api/raven/v1beta1"
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/pkg/networkengine/routedriver/vxlan"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
@@ -71,30 +71,6 @@ func (o *AgentOptions) Validate() error {
 		o.NodeIP = os.Getenv("NODE_IP")
 		if o.NodeIP == "" {
 			return errors.New("either --node-name or $NODE_NAME has to be set")
-		}
-	}
-	if o.VPNPort == "" {
-		o.VPNPort = os.Getenv("VPN_BIND_ADDRESS")
-		if o.VPNPort == "" {
-			return errors.New("either --vpn-bind-address or $VPN_BIND_PORT has to be set")
-		}
-	}
-	if o.InternalSecureAddress == "" {
-		o.InternalSecureAddress = os.Getenv("PROXY_SERVER_INTERNAL_SECURE_ADDRESS")
-		if o.InternalSecureAddress == "" {
-			return errors.New("either --proxy-internal-secure-address or PROXY_SERVER_INTERNAL_SECURE_ADDRESS has to be set")
-		}
-	}
-	if o.InternalInsecureAddress == "" {
-		o.InternalInsecureAddress = os.Getenv("PROXY_SERVER_INTERNAL_INSECURE_ADDRESS")
-		if o.InternalInsecureAddress == "" {
-			return errors.New("either --proxy-internal-insecure-address or PROXY_SERVER_INTERNAL_INSECURE_ADDRESS has to be set")
-		}
-	}
-	if o.ExternalAddress == "" {
-		o.ExternalAddress = os.Getenv("PROXY_SERVER_EXTERNAL_ADDRESS")
-		if o.ExternalAddress == "" {
-			return errors.New("either --proxy-external-address or $PROXY_SERVER_EXTERNAL_ADDRESS has to be set")
 		}
 	}
 	return nil
@@ -154,6 +130,12 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 		InternalInsecureAddress: o.InternalInsecureAddress,
 		InternalSecureAddress:   o.InternalSecureAddress,
 		ExternalAddress:         o.ExternalAddress,
+
+		ProxyServerCertDNSNames:  o.ProxyServerCertDNSNames,
+		ProxyServerCertIPs:       o.ProxyServerCertIPs,
+		ProxyClientCertDir:       o.ProxyClientCertDir,
+		ProxyServerCertDir:       o.ProxyServerCertDir,
+		InterceptorServerUDSFile: o.InterceptorServerUDSFile,
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create manager: %s", err)

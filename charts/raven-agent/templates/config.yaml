@@ -1,7 +1,7 @@
 apiVersion: v1
 data:
-  enable-l3-tunnel: "true"
-  enable-l7-proxy: "false"
+  enable-l3-tunnel: {{.Values.controller.enableTunnel | quote}}
+  enable-l7-proxy: {{.Values.controller.enableProxy | quote}}
 kind: ConfigMap
 metadata:
   name: raven-cfg

@@ -439,10 +439,10 @@ github.com/onsi/gomega v1.7.1/go.mod h1:XdKZgCCFLUoM/7CFJVPcG8C1xQ1AJ0vpAezJrB7J
 github.com/onsi/gomega v1.10.1/go.mod h1:iN09h71vgCQne3DLsj+A5owkum+a2tYe+TOCB1ybHNo=
 github.com/onsi/gomega v1.19.0 h1:4ieX6qQjPP/BfC3mpsAtIGGlxTWPeA3Inl/7DtXw1tw=
 github.com/opentracing/opentracing-go v1.1.0/go.mod h1:UkNAQd3GIcIGf0SeVgPpRdFStlNbqXla1AfSYxPUl2o=
+github.com/openyurtio/api v0.0.0-20231116122426-dfc46506cdb0 h1:zH7jnLVvAKVPr8WleYOhGG5yAiXoUYu2M2nqqk10/yM=
+github.com/openyurtio/api v0.0.0-20231116122426-dfc46506cdb0/go.mod h1:IIVOJ8bnLSzqPB3VHBuQ3wELW4gjRKJ2aSyLhaLxdOA=
 github.com/openyurtio/apiserver-network-proxy v0.1.1-0.20231007082056-cecf4c454651 h1:pBjrj95WZ7NkaIQvvb7hveI5fd8fXxlX7OtKRcciamY=
 github.com/openyurtio/apiserver-network-proxy v0.1.1-0.20231007082056-cecf4c454651/go.mod h1:yPrw5zKs7BVVCuQUaY4MzSmsYPKXWnZsrjKUWQrZX3w=
-github.com/openyurtio/openyurt v1.3.1-0.20230920090905-424dcc283167 h1:gbjh0njlthM0mM9Z6LHURdKpovLXReleT5GUwaksyFE=
-github.com/openyurtio/openyurt v1.3.1-0.20230920090905-424dcc283167/go.mod h1:c77rs9s+ztXyyHNf2EB+lMHuDfSWwel6dhP2ZVi5cvM=
 github.com/pascaldekloe/goe v0.0.0-20180627143212-57f6aae5913c/go.mod h1:lzWF7FIEvWOWxwDKqyGYQf6ZUaNfKdP144TG7ZOy1lc=
 github.com/pelletier/go-toml v1.2.0/go.mod h1:5z9KED0ma1S8pY6P1sdut58dfprrGBbd/94hg7ilaic=
 github.com/pelletier/go-toml v1.9.3/go.mod h1:u1nR/EPcESfeI/szUZKdtJ0xRNbUoANCkoOuaOx1Y+c=

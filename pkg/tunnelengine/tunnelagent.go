@@ -30,9 +30,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/EvilSuperstars/go-cidrman"
-	"github.com/openyurtio/openyurt/pkg/apis/raven"
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
-	ravenutils "github.com/openyurtio/openyurt/pkg/yurtmanager/controller/raven/utils"
+	"github.com/openyurtio/api/raven"
+	"github.com/openyurtio/api/raven/v1beta1"
 	"github.com/openyurtio/raven/pkg/networkengine/routedriver"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
 	"github.com/openyurtio/raven/pkg/types"
@@ -255,9 +254,9 @@ func (c *TunnelHandler) getLoadBalancerPublicIP(gwName string) (string, error) {
 	var svcList v1.ServiceList
 	err := c.ravenClient.List(context.TODO(), &svcList, &client.ListOptions{
 		LabelSelector: labels.Set{
-			raven.LabelCurrentGateway:               gwName,
-			raven.LabelCurrentGatewayType:           v1beta1.Tunnel,
-			ravenutils.LabelCurrentGatewayEndpoints: c.nodeName,
+			raven.LabelCurrentGateway:          gwName,
+			utils.LabelCurrentGatewayType:      v1beta1.Tunnel,
+			utils.LabelCurrentGatewayEndpoints: c.nodeName,
 		}.AsSelector(),
 	})
 	if err != nil {

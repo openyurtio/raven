@@ -27,7 +27,16 @@ spec:
           {{- toYaml . | nindent 8 }}
         {{- end }}
         args:
-          - --v=4
+          - --v=2
+          - --vpn-driver={{.Values.vpn.driver}}
+          - --forward-node-ip={{.Values.vpn.forwardNodeIP}}
+          - --metric-bind-addr={{.Values.vpn.metricBindAddr}}
+          - --vpn-bind-port={{.Values.vpn.tunnelAddr}}
+          - --proxy-metric-bind-addr={{.Values.proxy.metricsBindAddr}}
+          - --proxy-internal-secure-addr={{.Values.proxy.internalSecureAddr}}
+          - --proxy-internal-insecure-addr={{.Values.proxy.internalInsecureAddr}}
+          - --proxy-external-addr={{.Values.proxy.externalAddr}}
+
       hostNetwork: true
       {{- with .Values.nodeSelector }}
       nodeSelector:
