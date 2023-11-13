@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/vishvananda/netlink"
 
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
+	"github.com/openyurtio/api/raven/v1beta1"
 	networkutil "github.com/openyurtio/raven/pkg/networkengine/util"
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
 	"github.com/openyurtio/raven/pkg/types"

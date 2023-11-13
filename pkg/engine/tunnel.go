@@ -2,12 +2,13 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
+	"github.com/openyurtio/api/raven/v1beta1"
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/pkg/networkengine/routedriver"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
@@ -19,14 +20,14 @@ type TunnelEngine struct {
 	nodeName      string
 	config        *config.Config
 	client        client.Client
-	option        StatusOption
+	option        *Option
 	queue         workqueue.RateLimitingInterface
 	routeDriver   routedriver.Driver
 	vpnDriver     vpndriver.Driver
 	tunnelHandler *tunnelengine.TunnelHandler
 }
 
-func newTunnelEngine(cfg *config.Config, client client.Client, opt StatusOption, queue workqueue.RateLimitingInterface) *TunnelEngine {
+func newTunnelEngine(cfg *config.Config, client client.Client, opt *Option, queue workqueue.RateLimitingInterface) *TunnelEngine {
 	return &TunnelEngine{nodeName: cfg.NodeName, config: cfg, client: client, option: opt, queue: queue}
 }
 
@@ -52,11 +53,17 @@ func (t *TunnelEngine) processNextWorkItem() bool {
 
 func (t *TunnelEngine) handler(gw *v1beta1.Gateway) error {
 	klog.Info(utils.FormatRavenEngine("update raven l3 tunnel config for gateway %s", gw.GetName()))
-	err := t.reconcile()
+	if t.routeDriver == nil || t.vpnDriver == nil {
+		err := t.initDriver()
+		if err != nil {
+			klog.Errorf(utils.FormatRavenEngine("failed to init raven l3 tunnel engine"))
+		}
+	}
+	err := t.tunnelHandler.Handler()
 	if err != nil {
-		klog.Errorf("failed update tunnel driver, error %s", err.Error())
 		return err
 	}
+	t.option.SetTunnelStatus(enableTunnel(gw))
 	return nil
 }
 
@@ -97,20 +104,6 @@ func (t *TunnelEngine) clearDriver() error {
 	return nil
 }
 
-func (t *TunnelEngine) reconcile() error {
-	if t.routeDriver == nil || t.vpnDriver == nil {
-		err := t.initDriver()
-		if err != nil {
-			klog.Errorf(utils.FormatRavenEngine("failed to init raven l3 tunnel engine"))
-		}
-	}
-	err := t.tunnelHandler.Handler()
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 func (t *TunnelEngine) handleEventErr(err error, event interface{}) {
 	if err == nil {
 		t.queue.Forget(event)
@@ -123,4 +116,25 @@ func (t *TunnelEngine) handleEventErr(err error, event interface{}) {
 	}
 	klog.Info(utils.FormatRavenEngine("dropping event %q out of the queue: %v", event, err))
 	t.queue.Forget(event)
+}
+
+func enableTunnel(gw *v1beta1.Gateway) (enable bool) {
+	enable = false
+	for _, aep := range gw.Status.ActiveEndpoints {
+		if aep.Type == v1beta1.Tunnel {
+			if aep.Config == nil {
+				enable = false
+				return
+			}
+			start, ok := aep.Config[utils.RavenEnableTunnel]
+			if !ok {
+				enable = false
+				return
+			}
+			if strings.ToLower(start) == "true" {
+				enable = true
+			}
+		}
+	}
+	return
 }

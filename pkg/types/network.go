@@ -17,7 +17,7 @@
 package types
 
 import (
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
+	"github.com/openyurtio/api/raven/v1beta1"
 )
 
 // GatewayName is the type representing the name of Gateway.

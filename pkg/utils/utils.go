@@ -20,7 +20,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
+	"github.com/openyurtio/api/raven/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 

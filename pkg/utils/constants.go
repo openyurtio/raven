@@ -43,6 +43,12 @@ const (
 	RavenProxyServerForwardLocalMode     = "Local"
 	RavenProxyServerForwardRemoteMode    = "Remote"
 
-	WorkingNamespace = "kube-system"
-	RavenConfigName  = "raven-cfg"
+	WorkingNamespace  = "kube-system"
+	RavenConfigName   = "raven-cfg"
+	RavenEnableProxy  = "enable-l7-proxy"
+	RavenEnableTunnel = "enable-l3-tunnel"
+
+	GatewayProxyInternalService  = "x-raven-proxy-internal-svc"
+	LabelCurrentGatewayEndpoints = "raven.openyurt.io/endpoints-name"
+	LabelCurrentGatewayType      = "raven.openyurt.io/gateway-type"
 )

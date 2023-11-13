@@ -16,7 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
+	"github.com/openyurtio/api/raven/v1beta1"
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/pkg/utils"
 )
@@ -27,7 +27,7 @@ type Engine struct {
 	context  context.Context
 	manager  manager.Manager
 	client   client.Client
-	option   StatusOption
+	option   *Option
 
 	tunnelQueue  workqueue.RateLimitingInterface
 	tunnelEngine *TunnelEngine

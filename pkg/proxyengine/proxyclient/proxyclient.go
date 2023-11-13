@@ -32,10 +32,10 @@ import (
 	"k8s.io/klog/v2"
 	anp "sigs.k8s.io/apiserver-network-proxy/pkg/agent"
 
-	"github.com/openyurtio/openyurt/pkg/util/certmanager"
-	"github.com/openyurtio/openyurt/pkg/util/certmanager/factory"
 	"github.com/openyurtio/raven/pkg/proxyengine"
 	"github.com/openyurtio/raven/pkg/utils"
+	"github.com/openyurtio/raven/pkg/utils/certmanager"
+	"github.com/openyurtio/raven/pkg/utils/certmanager/factory"
 )
 
 type ProxyClient struct {

@@ -7,7 +7,7 @@ require (
 	github.com/coreos/go-iptables v0.6.0
 	github.com/gorilla/mux v1.8.0
 	github.com/lorenzosaino/go-sysctl v0.3.1
-	github.com/openyurtio/openyurt v1.3.1-0.20230920090905-424dcc283167
+	github.com/openyurtio/api v0.0.0-20231116122426-dfc46506cdb0
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.15.1
 	github.com/spf13/cobra v1.7.0
