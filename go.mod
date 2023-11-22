@@ -4,11 +4,10 @@ go 1.18
 
 require (
 	github.com/EvilSuperstars/go-cidrman v0.0.0-20190607145828-28e79e32899a
-	github.com/ccding/go-stun/stun v0.0.0-20200514191101-4dc67bcdb029
 	github.com/coreos/go-iptables v0.6.0
 	github.com/gorilla/mux v1.8.0
 	github.com/lorenzosaino/go-sysctl v0.3.1
-	github.com/openyurtio/openyurt v1.3.1-0.20231031135146-ea8392b1c68c
+	github.com/openyurtio/openyurt v1.3.1-0.20230920090905-424dcc283167
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.15.1
 	github.com/spf13/cobra v1.7.0
