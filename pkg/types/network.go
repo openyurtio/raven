@@ -32,13 +32,11 @@ type Endpoint struct {
 	// NodeName is the name of the Node holding this Endpoint.
 	NodeName NodeName
 	// Subnets stores subnets of the nodes managed by the gateway.
-	Subnets    []string
-	PrivateIP  string
-	PublicIP   string
-	PublicPort int
-	UnderNAT   bool
-	NATType    string
-	Config     map[string]string
+	Subnets   []string
+	PrivateIP string
+	PublicIP  string
+	UnderNAT  bool
+	Config    map[string]string
 }
 
 func (e *Endpoint) String() string {
