@@ -19,13 +19,12 @@ package proxyserver
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-
-	"math/rand"
 
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -33,8 +32,8 @@ import (
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/openyurtio/openyurt/pkg/apis/raven"
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
+	"github.com/openyurtio/api/raven"
+	"github.com/openyurtio/api/raven/v1beta1"
 	"github.com/openyurtio/raven/pkg/metrics"
 	"github.com/openyurtio/raven/pkg/utils"
 )
@@ -89,7 +88,7 @@ func (h *headerManger) Handler(handler http.Handler) http.Handler {
 			}
 		}
 		if host == "" || ip == "" || port == "" {
-			logAndHTTPError(w, http.StatusBadRequest, "request host %s and url %s is invalid, %s", r.Host, r.URL.String(), err.Error())
+			logAndHTTPError(w, http.StatusBadRequest, "request host %s and url %s is invalid", r.Host, r.URL.String())
 			return
 		}
 		// Complete request header information
@@ -143,18 +142,19 @@ func (h *headerManger) getAPIServerRequestDestAddress(r *http.Request) (name, ip
 	if err != nil {
 		return "", "", "", err
 	}
-
 	name, err = h.getGatewayNodeName(&node)
 	if err != nil {
 		return "", "", "", fmt.Errorf("gateway include node %s, has no active endpoints, error %s",
 			node.Name, err.Error())
 	}
-
 	ip = getNodeIP(&node)
 	if ip == "" {
 		return "", "", "", fmt.Errorf("node %s ip is empty", node.Name)
 	}
-	port = strconv.Itoa(int(node.Status.DaemonEndpoints.KubeletEndpoint.Port))
+	_, port, _ = net.SplitHostPort(r.Header.Get(utils.RavenProxyDestHeaderKey))
+	if port == "" {
+		port = strconv.Itoa(int(node.Status.DaemonEndpoints.KubeletEndpoint.Port))
+	}
 	return name, ip, port, nil
 }
 

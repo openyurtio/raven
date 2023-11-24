@@ -6,7 +6,7 @@ image:
   repository: openyurt/raven-agent
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
-  tag: latest
+  tag: v0.4.0
 
 imagePullSecrets: []
 nameOverride: ""
@@ -58,41 +58,7 @@ containerEnv:
         secretKeyRef:
           key: vpn-connection-psk
           name: raven-agent-secret
-    - name: VPN_DRIVER
-      valueFrom:
-        configMapKeyRef:
-          key: vpn-driver
-          name: raven-agent-config
-    - name: FORWARD_NODE_IP
-      valueFrom:
-        configMapKeyRef:
-          key: forward-node-ip
-          name: raven-agent-config
-    - name: METRIC_BIND_ADDR
-      valueFrom:
-        configMapKeyRef:
-          key: metric-bind-addr
-          name: raven-agent-config
-    - name: VPN_BIND_ADDRESS
-      valueFrom:
-        configMapKeyRef:
-          key: tunnel-bind-addr
-          name: raven-agent-config
-    - name: PROXY_SERVER_INTERNAL_SECURE_ADDRESS
-      valueFrom:
-        configMapKeyRef:
-          key: proxy-internal-secure-addr
-          name: raven-agent-config
-    - name: PROXY_SERVER_INTERNAL_INSECURE_ADDRESS
-      valueFrom:
-        configMapKeyRef:
-          key: proxy-internal-insecure-addr
-          name: raven-agent-config
-    - name: PROXY_SERVER_EXTERNAL_ADDRESS
-      valueFrom:
-        configMapKeyRef:
-          key: proxy-external-addr
-          name: raven-agent-config
+
 vpn:
   driver: libreswan
   forwardNodeIP: true
@@ -104,11 +70,16 @@ vpn:
   psk: OPENYURT-RAVEN-AGENT-VPN-PSK
   metricBindAddr: ":10265"
   tunnelAddr: ":4500"
+
+controller:
+  enableProxy: true
+  enableTunnel: true
+
 proxy:
   externalAddr: ":10262"
   internalInsecureAddr: ":10264"
   internalSecureAddr: ":10263"
-
+  metricsBindAddr: ":10266"
 
 rollingUpdate:
   maxUnavailable: 5%

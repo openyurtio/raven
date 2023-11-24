@@ -38,13 +38,12 @@ import (
 	anpserver "sigs.k8s.io/apiserver-network-proxy/pkg/server"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/openyurtio/openyurt/pkg/apis/raven"
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
-	"github.com/openyurtio/openyurt/pkg/util/certmanager"
-	"github.com/openyurtio/openyurt/pkg/util/certmanager/factory"
-	ravenutils "github.com/openyurtio/openyurt/pkg/yurtmanager/controller/raven/utils"
+	"github.com/openyurtio/api/raven"
+	"github.com/openyurtio/api/raven/v1beta1"
 	"github.com/openyurtio/raven/pkg/proxyengine"
 	"github.com/openyurtio/raven/pkg/utils"
+	"github.com/openyurtio/raven/pkg/utils/certmanager"
+	"github.com/openyurtio/raven/pkg/utils/certmanager/factory"
 )
 
 type ProxyServer struct {
@@ -110,12 +109,12 @@ func NewProxyServer(cfg *proxyengine.EnginConfig, client client.Client, kubeCfg 
 }
 
 func (c *ProxyServer) Start(ctx context.Context) error {
-	dnsNames, IPs := c.getProxyServerIPsAndDNSName(ctx)
+	dnsNames, IPs := c.getProxyServerIPsAndDNSName()
 	certFactory := factory.NewCertManagerFactory(c.clientSet)
 	serverCertCfg := &factory.CertManagerConfig{
 		IPs: append(c.certIPs, IPs...),
 		IPGetter: func() ([]net.IP, error) {
-			_, ips := c.getProxyServerIPsAndDNSName(ctx)
+			_, ips := c.getProxyServerIPsAndDNSName()
 			return ips, nil
 		},
 		DNSNames:       append(c.certDNSNames, dnsNames...),
@@ -128,10 +127,10 @@ func (c *ProxyServer) Start(ctx context.Context) error {
 	}
 	serverCertMgr, err := certFactory.New(serverCertCfg)
 	if err != nil {
-		klog.Errorf(utils.FormatProxyServer("failed to new server cert manager factory for proxy server %s, error %s", c.nodeName, err.Error()))
 		return fmt.Errorf("failed to new server cert manager factory for proxy server %s, error %s", c.nodeName, err.Error())
 	}
 	serverCertMgr.Start()
+	defer serverCertMgr.Stop()
 
 	proxyCertCfg := &factory.CertManagerConfig{
 		CertDir:       c.certDir,
@@ -142,7 +141,6 @@ func (c *ProxyServer) Start(ctx context.Context) error {
 	}
 	proxyCertMgr, err := certFactory.New(proxyCertCfg)
 	if err != nil {
-		klog.Errorf(utils.FormatProxyServer("failed to new proxy cert manager factory for proxy server %s, error %s", c.nodeName, err.Error()))
 		return fmt.Errorf("failed to new proxy cert manager factory for proxy server %s, error %s", c.nodeName, err.Error())
 	}
 	proxyCertMgr.Start()
@@ -165,11 +163,14 @@ func (c *ProxyServer) Start(ctx context.Context) error {
 		return err
 	}
 	utils.RunMetaServer(ctx, c.metaAddress)
-	c.runServers(ctx)
+	err = c.runServers(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to run proxy servers, error %s", err.Error())
+	}
 	return nil
 }
 
-func (c *ProxyServer) runServers(ctx context.Context) {
+func (c *ProxyServer) runServers(ctx context.Context) error {
 	klog.Info(utils.FormatProxyServer("start proxy server"))
 	strategy := []anpserver.ProxyStrategy{anpserver.ProxyStrategyDestHost}
 	proxyServer := anpserver.NewProxyServer(c.nodeName, strategy, 1, &anpserver.AgentTokenAuthenticationOptions{})
@@ -178,58 +179,60 @@ func (c *ProxyServer) runServers(ctx context.Context) {
 	headerMgr := NewHeaderManager(c.client, c.gateway.GetName(), utilnet.IsIPv4String(c.nodeIP))
 	NewMaster(headerMgr.Handler(interceptor), c.serverTLSConfig, c.internalSecureAddress, c.internalInsecureAddress).Run(ctx)
 	NewAgent(c.serverTLSConfig, proxyServer, c.exposedAddress).Run(ctx)
+	return nil
 }
 
-func (c *ProxyServer) getProxyServerIPsAndDNSName(ctx context.Context) (dnsName []string, ipAddr []net.IP) {
+func (c *ProxyServer) getProxyServerIPsAndDNSName() (dnsName []string, ipAddr []net.IP) {
+
 	ipAddr = append(ipAddr, net.ParseIP(c.nodeIP))
 	ipAddr = append(ipAddr, net.ParseIP(utils.DefaultLoopBackIP4))
+	ipAddr = append(ipAddr, c.certIPs...)
 	dnsName = append(dnsName, c.nodeName)
-	_ = wait.PollImmediateWithContext(ctx, 10*time.Second, 10*time.Minute, func(ctx context.Context) (done bool, err error) {
-		var svc v1.Service
-		err = c.client.Get(ctx, types.NamespacedName{Namespace: ravenutils.WorkingNamespace, Name: ravenutils.GatewayProxyInternalService}, &svc)
-		if err != nil {
-			klog.Errorf(utils.FormatProxyServer("failed to get internal service %s/%s to get proxy server IPs and DNSNames, error %s",
-				svc.GetNamespace(), svc.GetName(), err.Error()))
-			return false, nil
-		}
+
+	var svc v1.Service
+	err := c.client.Get(context.TODO(), types.NamespacedName{Namespace: utils.WorkingNamespace, Name: utils.GatewayProxyInternalService}, &svc)
+	if err != nil {
+		klog.Errorf(utils.FormatProxyServer("failed to get internal service %s/%s to get proxy server IPs and DNSNames, error %s",
+			svc.GetNamespace(), svc.GetName(), err.Error()))
+		return
+	}
+	dnsName = append(dnsName, getDefaultDomainsForSvc(svc.GetNamespace(), svc.GetName())...)
+	if svc.Spec.ClusterIP != "" {
+		ipAddr = append(ipAddr, net.ParseIP(svc.Spec.ClusterIP))
+	}
+	var svcList v1.ServiceList
+	err = c.client.List(context.TODO(), &svcList, &client.ListOptions{
+		LabelSelector: labels.Set{
+			raven.LabelCurrentGateway:          c.gateway.GetName(),
+			utils.LabelCurrentGatewayType:      v1beta1.Proxy,
+			utils.LabelCurrentGatewayEndpoints: c.nodeName,
+		}.AsSelector(),
+	})
+	if err != nil {
+		klog.Errorf(utils.FormatProxyServer("failed to get public serivce for gateway %s, node %s to get proxy server IPs and DNSNames, error %s",
+			c.gateway.GetName(), c.nodeName, err.Error()))
+		return
+	}
+
+	for _, svc = range svcList.Items {
 		dnsName = append(dnsName, getDefaultDomainsForSvc(svc.GetNamespace(), svc.GetName())...)
+		dnsName = append(dnsName, getExternalDNSName(&svc)...)
+		ipAddr = append(ipAddr, getExternalIPForSvc(&svc)...)
 		if svc.Spec.ClusterIP != "" {
 			ipAddr = append(ipAddr, net.ParseIP(svc.Spec.ClusterIP))
 		}
-		var svcList v1.ServiceList
-		err = c.client.List(ctx, &svcList, &client.ListOptions{
-			LabelSelector: labels.Set{
-				raven.LabelCurrentGateway:               c.gateway.GetName(),
-				raven.LabelCurrentGatewayType:           v1beta1.Proxy,
-				ravenutils.LabelCurrentGatewayEndpoints: c.nodeName,
-			}.AsSelector(),
-		})
-		if err != nil {
-			klog.Errorf(utils.FormatProxyServer("failed to get public service for gateway %s, node %s to get proxy server IPs and DNSNames, error %s",
-				c.gateway.GetName(), c.nodeName, err.Error()))
-			return false, nil
-		}
-
-		for _, svc = range svcList.Items {
-			dnsName = append(dnsName, getDefaultDomainsForSvc(svc.GetNamespace(), svc.GetName())...)
-			dnsName = append(dnsName, getExternalDNSName(&svc)...)
-			ipAddr = append(ipAddr, getExternalIPForSvc(&svc)...)
-			if svc.Spec.ClusterIP != "" {
-				ipAddr = append(ipAddr, net.ParseIP(svc.Spec.ClusterIP))
-			}
-			if svc.Status.LoadBalancer.Ingress != nil {
-				for _, ing := range svc.Status.LoadBalancer.Ingress {
-					if ing.IP != "" {
-						ipAddr = append(ipAddr, net.ParseIP(ing.IP))
-					}
-					if ing.Hostname != "" {
-						dnsName = append(dnsName, ing.Hostname)
-					}
+		if svc.Status.LoadBalancer.Ingress != nil {
+			for _, ing := range svc.Status.LoadBalancer.Ingress {
+				if ing.IP != "" {
+					ipAddr = append(ipAddr, net.ParseIP(ing.IP))
+				}
+				if ing.Hostname != "" {
+					dnsName = append(dnsName, ing.Hostname)
 				}
 			}
 		}
-		return true, nil
-	})
+	}
+	klog.V(3).Info("cert address is %v", ipAddr)
 	return
 }
 

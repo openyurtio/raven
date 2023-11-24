@@ -60,7 +60,7 @@ func (p *proxies) Run(ctx context.Context) {
 		defer listen.Close()
 		go func(ctx context.Context) {
 			<-ctx.Done()
-			err = server.Shutdown(ctx)
+			err := server.Shutdown(context.TODO())
 			if err != nil {
 				klog.Errorf("failed to shutdown proxies server, error %s", err.Error())
 			}
@@ -96,7 +96,7 @@ func (m *master) Run(ctx context.Context) {
 		}
 		go func(ctx context.Context) {
 			<-ctx.Done()
-			err := server.Shutdown(ctx)
+			err := server.Shutdown(context.TODO())
 			if err != nil {
 				klog.Errorf("failed to shutdown master secure server, error %s", err.Error())
 			}
@@ -117,7 +117,7 @@ func (m *master) Run(ctx context.Context) {
 		}
 		go func(ctx context.Context) {
 			<-ctx.Done()
-			err := server.Shutdown(ctx)
+			err := server.Shutdown(context.TODO())
 			if err != nil {
 				klog.Errorf("failed to shutdown master insecure server, error %s", err.Error())
 			}

@@ -25,6 +25,7 @@ rules:
       - configmaps
       - services
       - nodes
+      - pods
     verbs:
       - get
       - list

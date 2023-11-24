@@ -15,8 +15,7 @@ import (
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
-	ravenutil "github.com/openyurtio/openyurt/pkg/yurtmanager/controller/raven/utils"
+	"github.com/openyurtio/api/raven/v1beta1"
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/pkg/proxyengine"
 	"github.com/openyurtio/raven/pkg/proxyengine/proxyclient"
@@ -24,31 +23,55 @@ import (
 	"github.com/openyurtio/raven/pkg/utils"
 )
 
-type ProxyEngine struct {
-	nodeName             string
-	nodeIP               string
-	proxyServerAddresses []string
-	gateway              *v1beta1.Gateway
-	config               *config.Config
-	client               client.Client
-	engineOption         StatusOption
-	proxyOption          *proxyOption
-	ravenContext         context.Context
-	proxyContext         ProxyContext
-	queue                workqueue.RateLimitingInterface
+type ActionType string
+
+const (
+	StartType   ActionType = "Start"
+	StopType    ActionType = "Stop"
+	RestartType ActionType = "Restart"
+	SkipType    ActionType = "Skip"
+)
+
+func JudgeType(curr, spec bool) ActionType {
+	if curr && spec {
+		return RestartType
+	}
+	if curr && !spec {
+		return StopType
+	}
+	if !curr && spec {
+		return StartType
+	}
+	return SkipType
 }
 
-func newProxyEngine(ctx context.Context, cfg *config.Config, client client.Client, opt StatusOption, queue workqueue.RateLimitingInterface) *ProxyEngine {
+type ProxyEngine struct {
+	nodeName              string
+	nodeIP                string
+	serverLocalEndpoints  []string
+	clientRemoteEndpoints []string
+	gateway               *v1beta1.Gateway
+	config                *config.Config
+	client                client.Client
+
+	ctx         context.Context
+	option      *Option
+	proxyCtx    ProxyContext
+	proxyOption *proxyOption
+	queue       workqueue.RateLimitingInterface
+}
+
+func newProxyEngine(ctx context.Context, cfg *config.Config, client client.Client, opt *Option, queue workqueue.RateLimitingInterface) *ProxyEngine {
 	return &ProxyEngine{
-		nodeName:     cfg.NodeName,
-		nodeIP:       cfg.NodeIP,
-		config:       cfg,
-		client:       client,
-		engineOption: opt,
-		ravenContext: ctx,
-		proxyOption:  newProxyOption(),
-		proxyContext: newProxyContext(ctx),
-		queue:        queue,
+		nodeName:    cfg.NodeName,
+		nodeIP:      cfg.NodeIP,
+		config:      cfg,
+		client:      client,
+		option:      opt,
+		ctx:         ctx,
+		proxyCtx:    newProxyContext(ctx),
+		proxyOption: newProxyOption(),
+		queue:       queue,
 	}
 }
 
@@ -74,117 +97,164 @@ func (p *ProxyEngine) processNextWorkItem() bool {
 }
 
 func (p *ProxyEngine) handler(gw *v1beta1.Gateway) error {
-	curServer := p.proxyOption.GetServerStatus()
-	curClient := p.proxyOption.GetClientStatus()
-	specServer, specClient := p.getRole(enableProxy(gw))
+	proxyStatus := enableProxy(gw)
+	p.option.SetProxyStatus(proxyStatus)
+	specServer, specClient := p.getRole(proxyStatus)
 	var err error
 	p.gateway, err = utils.GetOwnGateway(p.client, p.nodeName)
 	if err != nil {
-		klog.Errorf("failed get gateway for %s, can not start proxy server", p.nodeName)
-		return fmt.Errorf("failed get gateway name for %s, can not start proxy server", p.nodeName)
-	}
-	if !curServer && specServer {
-		klog.Infoln(utils.FormatProxyServer("start raven l7 proxy server"))
-		if p.gateway == nil {
-			klog.Errorf("unknown gateway for node %s, can not start proxy server", p.nodeName)
-		}
-		pe := &proxyengine.EnginConfig{
-			Name:                    p.nodeName,
-			IP:                      p.nodeIP,
-			GatewayName:             p.gateway.Name,
-			CertDir:                 p.config.Proxy.ProxyServerCertDir,
-			MetaAddress:             p.config.Proxy.ProxyMetricsAddress,
-			CertIPs:                 p.config.Proxy.ProxyServerCertIPs,
-			CertDNSNames:            p.config.Proxy.ProxyServerCertDNSNames,
-			InterceptorUDSFile:      p.config.Proxy.InterceptorServerUDSFile,
-			InternalSecureAddress:   p.config.Proxy.InternalSecureAddress,
-			InternalInsecureAddress: p.config.Proxy.InternalInsecureAddress,
-			ExposedAddress:          p.config.Proxy.ExternalAddress,
-		}
-		ctx := p.proxyContext.GetServerContext()
-		ps, err := proxyserver.NewProxyServer(pe, p.client, p.config.Manager.GetConfig(), p.gateway.DeepCopy())
-		if err != nil {
-			klog.Errorf("failed to new proxy server, error %s", err.Error())
-			return err
-		}
-		err = ps.Start(ctx)
-		if err != nil {
-			klog.Errorf("failed to start proxy server, error %s", err.Error())
-		}
-		p.proxyOption.SetServerStatus(specServer)
-	} else if curServer && !specServer {
-		klog.Infoln(utils.FormatProxyServer("Stop raven l7 proxy server"))
-		cancel := p.proxyContext.GetServerCancelFunc()
-		cancel()
-		p.proxyOption.SetServerStatus(specServer)
-		p.proxyContext.ReloadServerContext(p.ravenContext)
+		klog.Errorf(utils.FormatProxyServer("failed get gateway for %s, can not start proxy server", p.nodeName))
+		return err
 	}
 
-	if !curClient && specClient {
-		klog.Infoln(utils.FormatProxyClient("start raven l7 proxy client"))
-		var err error
-		dstAddr := getDestAddressForProxyClient(p.client, p.gateway)
-		if len(dstAddr) < 1 {
-			klog.Infoln(utils.FormatProxyClient("dest address is empty, will not connected it"))
-			return nil
-		}
-		p.proxyServerAddresses = dstAddr
-		pe := &proxyengine.EnginConfig{
-			Name:        p.nodeName,
-			IP:          p.nodeIP,
-			CertDir:     p.config.Proxy.ProxyClientCertDir,
-			MetaAddress: p.config.Proxy.ProxyMetricsAddress,
-		}
-		pc, err := proxyclient.NewProxyClient(pe, p.proxyServerAddresses, p.config.KubeConfig)
+	switch JudgeType(p.proxyOption.GetServerStatus(), specServer) {
+	case StartType:
+		err = p.startProxyServer()
 		if err != nil {
-			klog.Errorf("failed to new proxy client, error %s", err.Error())
+			klog.Errorf(utils.FormatProxyServer("failed to start proxy server, error %s", err.Error()))
 			return err
 		}
-		ctx := p.proxyContext.GetClientContext()
-		err = pc.Start(ctx)
-		if err != nil {
-			klog.Errorf("failed to start proxy client, error %s", err.Error())
+	case StopType:
+		p.stopProxyServer()
+	case RestartType:
+		srcAddr := getSrcAddressForProxyServer(p.client, p.nodeName)
+		if computeHash(strings.Join(p.serverLocalEndpoints, ",")) != computeHash(strings.Join(srcAddr, ",")) {
+			p.stopProxyServer()
+			time.Sleep(time.Second)
+			err = p.startProxyServer()
+			if err != nil {
+				klog.Errorf(utils.FormatProxyServer("failed to start proxy server, error %s", err.Error()))
+				return err
+			}
+			p.serverLocalEndpoints = srcAddr
 		}
-		p.proxyOption.SetClientStatus(specClient)
-		return nil
-	} else if curClient && !specClient {
-		klog.Infoln(utils.FormatProxyClient("stop raven l7 proxy client"))
-		cancel := p.proxyContext.GetClientCancelFunc()
-		cancel()
-		p.proxyOption.SetClientStatus(specClient)
-		p.proxyContext.ReloadClientContext(p.ravenContext)
-	} else if curClient && specClient {
+	default:
+
+	}
+
+	switch JudgeType(p.proxyOption.GetClientStatus(), specClient) {
+	case StartType:
+		err = p.startProxyClient()
+		if err != nil {
+			klog.Errorf(utils.FormatProxyServer("failed to start proxy client, error %s", err.Error()))
+			return err
+		}
+	case StopType:
+		p.stopProxyClient()
+	case RestartType:
 		dstAddr := getDestAddressForProxyClient(p.client, p.gateway)
 		if len(dstAddr) < 1 {
 			klog.Infoln(utils.FormatProxyClient("dest address is empty, will not connected it"))
 			return nil
 		}
-		if computeHash(strings.Join(p.proxyServerAddresses, ",")) != computeHash(strings.Join(dstAddr, ",")) {
-			klog.Infoln(utils.FormatProxyClient("Update raven l7 proxy client"))
-			cancel := p.proxyContext.GetClientCancelFunc()
-			cancel()
-			time.Sleep(2 * time.Second)
-			p.proxyContext.ReloadClientContext(p.ravenContext)
-			p.proxyServerAddresses = dstAddr
-			pe := &proxyengine.EnginConfig{
-				Name:        p.nodeName,
-				IP:          p.nodeIP,
-				CertDir:     p.config.Proxy.ProxyClientCertDir,
-				MetaAddress: p.config.Proxy.ProxyMetricsAddress,
-			}
-			pc, err := proxyclient.NewProxyClient(pe, p.proxyServerAddresses, p.config.KubeConfig)
+		if computeHash(strings.Join(p.clientRemoteEndpoints, ",")) != computeHash(strings.Join(dstAddr, ",")) {
+			p.stopProxyClient()
+			time.Sleep(time.Second)
+			err = p.startProxyClient()
 			if err != nil {
-				klog.Errorf("failed to new proxy server, error %s", err.Error())
+				klog.Errorf(utils.FormatProxyServer("failed to start proxy client, error %s", err.Error()))
 				return err
 			}
-			ctx := p.proxyContext.GetClientContext()
-			err = pc.Start(ctx)
-			if err != nil {
-				klog.Errorf("failed to start proxy client, error %s", err.Error())
+		}
+	default:
+
+	}
+	return nil
+}
+
+func (p *ProxyEngine) startProxyServer() error {
+	klog.Infoln(utils.FormatProxyServer("start raven l7 proxy server"))
+	if p.gateway == nil {
+		return fmt.Errorf("unknown gateway for node %s, can not start proxy server", p.nodeName)
+	}
+	pe := &proxyengine.EnginConfig{
+		Name:                    p.nodeName,
+		IP:                      p.nodeIP,
+		GatewayName:             p.gateway.Name,
+		CertDir:                 p.config.Proxy.ProxyServerCertDir,
+		MetaAddress:             p.config.Proxy.ProxyMetricsAddress,
+		CertIPs:                 p.config.Proxy.ProxyServerCertIPs,
+		CertDNSNames:            p.config.Proxy.ProxyServerCertDNSNames,
+		InterceptorUDSFile:      p.config.Proxy.InterceptorServerUDSFile,
+		InternalSecureAddress:   p.config.Proxy.InternalSecureAddress,
+		InternalInsecureAddress: p.config.Proxy.InternalInsecureAddress,
+		ExposedAddress:          p.config.Proxy.ExternalAddress,
+	}
+	ctx := p.proxyCtx.GetServerContext()
+	ps, err := proxyserver.NewProxyServer(pe, p.client, p.config.Manager.GetConfig(), p.gateway.DeepCopy())
+	if err != nil {
+		return fmt.Errorf("failed to new proxy server, error %s", err.Error())
+	}
+	err = ps.Start(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to start proxy server, error %s", err.Error())
+	}
+	p.proxyOption.SetServerStatus(true)
+	return nil
+}
+
+func (p *ProxyEngine) stopProxyServer() {
+	klog.Infoln(utils.FormatProxyServer("Stop raven l7 proxy server"))
+	cancel := p.proxyCtx.GetServerCancelFunc()
+	cancel()
+	p.proxyOption.SetServerStatus(false)
+	p.proxyCtx.ReloadServerContext(p.ctx)
+}
+
+func (p *ProxyEngine) startProxyClient() error {
+	klog.Infoln(utils.FormatProxyClient("start raven l7 proxy client"))
+	var err error
+	dstAddr := getDestAddressForProxyClient(p.client, p.gateway)
+	if len(dstAddr) < 1 {
+		klog.Infoln(utils.FormatProxyClient("dest address is empty, will not connected it"))
+		return nil
+	}
+	p.clientRemoteEndpoints = dstAddr
+	pe := &proxyengine.EnginConfig{
+		Name:        p.nodeName,
+		IP:          p.nodeIP,
+		CertDir:     p.config.Proxy.ProxyClientCertDir,
+		MetaAddress: p.config.Proxy.ProxyMetricsAddress,
+	}
+	pc, err := proxyclient.NewProxyClient(pe, p.clientRemoteEndpoints, p.config.KubeConfig)
+	if err != nil {
+		klog.Errorf("failed to new proxy client, error %s", err.Error())
+		return err
+	}
+	ctx := p.proxyCtx.GetClientContext()
+	err = pc.Start(ctx)
+	if err != nil {
+		klog.Errorf("failed to start proxy client, error %s", err.Error())
+	}
+	p.proxyOption.SetClientStatus(true)
+	return nil
+}
+
+func (p *ProxyEngine) stopProxyClient() {
+	klog.Infoln(utils.FormatProxyClient("stop raven l7 proxy client"))
+	cancel := p.proxyCtx.GetClientCancelFunc()
+	cancel()
+	p.proxyOption.SetClientStatus(false)
+	p.proxyCtx.ReloadClientContext(p.ctx)
+}
+func getSrcAddressForProxyServer(client client.Client, nodeName string) []string {
+	srcAddr := make([]string, 0)
+	var gwList v1beta1.GatewayList
+	err := client.List(context.TODO(), &gwList)
+	if err != nil {
+		return srcAddr
+	}
+	for _, gw := range gwList.Items {
+		if gw.Spec.ExposeType == "" {
+			continue
+		}
+		for _, aep := range gw.Status.ActiveEndpoints {
+			if aep.NodeName == nodeName && aep.Type == v1beta1.Proxy {
+				srcAddr = append(srcAddr, aep.PublicIP)
 			}
 		}
 	}
-	return nil
+	return srcAddr
 }
 
 func getDestAddressForProxyClient(client client.Client, ownGateway *v1beta1.Gateway) []string {
@@ -218,7 +288,7 @@ func (p *ProxyEngine) getRole(enableProxy bool) (enableServer, enableClient bool
 		return
 	}
 	var gwList v1beta1.GatewayList
-	err := p.client.List(p.ravenContext, &gwList)
+	err := p.client.List(p.ctx, &gwList)
 	if err != nil {
 		return
 	}
@@ -250,11 +320,11 @@ func (p *ProxyEngine) getRole(enableProxy bool) (enableServer, enableClient bool
 
 func (p *ProxyEngine) stopServers() {
 	if p.proxyOption.GetServerStatus() {
-		cancelServer := p.proxyContext.GetServerCancelFunc()
+		cancelServer := p.proxyCtx.GetServerCancelFunc()
 		cancelServer()
 	}
 	if p.proxyOption.GetClientStatus() {
-		cancelClient := p.proxyContext.GetClientCancelFunc()
+		cancelClient := p.proxyCtx.GetClientCancelFunc()
 		cancelClient()
 	}
 }
@@ -267,7 +337,7 @@ func enableProxy(gw *v1beta1.Gateway) (enable bool) {
 				enable = false
 				return
 			}
-			start, ok := aep.Config[ravenutil.RavenEnableProxy]
+			start, ok := aep.Config[utils.RavenEnableProxy]
 			if !ok {
 				enable = false
 				return

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
+	"github.com/openyurtio/api/raven/v1beta1"
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/pkg/types"

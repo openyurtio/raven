@@ -5,42 +5,35 @@ import (
 	"sync"
 )
 
-type StatusOption interface {
-	GetProxyStatus() bool
-	GetTunnelStatus() bool
-	SetProxyStatus(status bool)
-	SetTunnelStatus(status bool)
-}
-
-type engineOption struct {
+type Option struct {
 	mu           sync.Mutex
 	enableProxy  bool
 	enableTunnel bool
 }
 
-func NewEngineOption() StatusOption {
-	return &engineOption{enableTunnel: false, enableProxy: false}
+func NewEngineOption() *Option {
+	return &Option{enableTunnel: false, enableProxy: false}
 }
 
-func (s *engineOption) GetProxyStatus() bool {
+func (s *Option) GetProxyStatus() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.enableProxy
 }
 
-func (s *engineOption) GetTunnelStatus() bool {
+func (s *Option) GetTunnelStatus() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.enableTunnel
 }
 
-func (s *engineOption) SetProxyStatus(status bool) {
+func (s *Option) SetProxyStatus(status bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.enableProxy = status
 }
 
-func (s *engineOption) SetTunnelStatus(status bool) {
+func (s *Option) SetTunnelStatus(status bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.enableTunnel = status
