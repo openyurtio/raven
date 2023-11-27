@@ -239,7 +239,7 @@ func (c *TunnelHandler) configGatewayPublicIP(gateway *v1beta1.Gateway) error {
 			return err
 		}
 		for k, v := range apiGw.Spec.Endpoints {
-			if v.NodeName == c.nodeName {
+			if v.NodeName == c.nodeName && v.Type == v1beta1.Tunnel {
 				apiGw.Spec.Endpoints[k].PublicIP = publicIP
 				err = c.ravenClient.Update(context.Background(), &apiGw)
 				return err
