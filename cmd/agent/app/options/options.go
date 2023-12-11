@@ -70,7 +70,7 @@ func (o *AgentOptions) Validate() error {
 	if o.NodeIP == "" {
 		o.NodeIP = os.Getenv("NODE_IP")
 		if o.NodeIP == "" {
-			return errors.New("either --node-name or $NODE_NAME has to be set")
+			return errors.New("either --node-ip or $NODE_IP has to be set")
 		}
 	}
 	return nil
@@ -79,6 +79,7 @@ func (o *AgentOptions) Validate() error {
 // AddFlags returns flags for a specific yurttunnel-agent by section name
 func (o *AgentOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.NodeName, "node-name", o.NodeName, "The name of the node.")
+	fs.StringVar(&o.NodeIP, "node-ip", o.NodeIP, "The ip of the node.")
 	fs.StringVar(&o.Kubeconfig, "kubeconfig", o.Kubeconfig, "Path to the kubeconfig file.")
 	fs.StringVar(&o.VPNDriver, "vpn-driver", o.VPNDriver, `The VPN driver name. (default "libreswan")`)
 	fs.StringVar(&o.RouteDriver, "route-driver", o.RouteDriver, `The Route driver name. (default "vxlan")`)
