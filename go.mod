@@ -4,6 +4,7 @@ go 1.18
 
 require (
 	github.com/EvilSuperstars/go-cidrman v0.0.0-20190607145828-28e79e32899a
+	github.com/ccding/go-stun v0.1.5-0.20230908213042-0f417a9a4966
 	github.com/coreos/go-iptables v0.6.0
 	github.com/gorilla/mux v1.8.0
 	github.com/lorenzosaino/go-sysctl v0.3.1

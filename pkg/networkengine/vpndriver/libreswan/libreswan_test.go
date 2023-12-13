@@ -372,8 +372,9 @@ func TestLibreswan_Apply(t *testing.T) {
 			whackCmd = w.whackCmd
 			a := assert.New(t)
 			l := &libreswan{
-				connections: make(map[string]*vpndriver.Connection),
-				nodeName:    types.NodeName(v.nodeName),
+				relayConnections: make(map[string]*vpndriver.Connection),
+				edgeConnections:  make(map[string]*vpndriver.Connection),
+				nodeName:         types.NodeName(v.nodeName),
 			}
 			var err error
 			l.iptables, err = iptablesutil.New()
