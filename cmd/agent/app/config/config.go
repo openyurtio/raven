@@ -37,6 +37,7 @@ type TunnelConfig struct {
 	VPNPort       string
 	RouteDriver   string
 	ForwardNodeIP bool
+	NATTraversal  bool
 }
 
 type ProxyConfig struct {

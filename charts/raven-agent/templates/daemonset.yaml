@@ -30,6 +30,7 @@ spec:
           - --v=2
           - --vpn-driver={{.Values.vpn.driver}}
           - --forward-node-ip={{.Values.vpn.forwardNodeIP}}
+          - --nat-traversal={{.Values.vpn.natTraversal}}
           - --metric-bind-addr={{.Values.vpn.metricBindAddr}}
           - --vpn-bind-port={{.Values.vpn.tunnelAddr}}
           - --proxy-metric-bind-addr={{.Values.proxy.metricsBindAddr}}

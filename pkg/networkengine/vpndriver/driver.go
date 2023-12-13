@@ -28,6 +28,7 @@ import (
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
 	"github.com/openyurtio/raven/pkg/types"
+	"github.com/openyurtio/raven/pkg/utils"
 )
 
 const (
@@ -65,6 +66,7 @@ type Factory func(cfg *config.Config) (Driver, error)
 var (
 	driversMutex sync.Mutex
 	drivers      = make(map[string]Factory)
+	natTraversal bool
 )
 
 func RegisterDriver(name string, factory Factory) {
@@ -78,6 +80,9 @@ func RegisterDriver(name string, factory Factory) {
 }
 
 func New(name string, cfg *config.Config) (Driver, error) {
+	if cfg.Tunnel != nil {
+		natTraversal = cfg.Tunnel.NATTraversal
+	}
 	driversMutex.Lock()
 	defer driversMutex.Unlock()
 	if _, found := drivers[name]; !found {
@@ -108,6 +113,22 @@ func FindCentralGwFn(network *types.Network) *types.Endpoint {
 		}
 	}
 	return central
+}
+
+// EnableCreateEdgeConnection determine whether VPN tunnels can be established between edges.
+func EnableCreateEdgeConnection(localEndpoint *types.Endpoint, remoteEndpoint *types.Endpoint) bool {
+	if !natTraversal {
+		return false
+	}
+	if localEndpoint.NATType == utils.NATUndefined || remoteEndpoint.NATType == utils.NATUndefined {
+		return false
+	}
+	if !localEndpoint.UnderNAT || !remoteEndpoint.UnderNAT {
+		return false
+	}
+	return !((localEndpoint.NATType == utils.NATSymmetric && remoteEndpoint.NATType == utils.NATSymmetric) ||
+		(localEndpoint.NATType == utils.NATSymmetric && remoteEndpoint.NATType == utils.NATPortRestricted) ||
+		(localEndpoint.NATType == utils.NATPortRestricted && remoteEndpoint.NATType == utils.NATSymmetric))
 }
 
 func DefaultMTU() (int, error) {

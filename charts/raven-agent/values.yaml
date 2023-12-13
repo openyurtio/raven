@@ -62,6 +62,7 @@ containerEnv:
 vpn:
   driver: libreswan
   forwardNodeIP: false
+  natTraversal: false
   # raven-agent requires a unique vpn psk
   # You can generate one with the command:
   # 'openssl rand -hex 64'

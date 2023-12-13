@@ -45,6 +45,7 @@ type TunnelOptions struct {
 	VPNPort       string
 	RouteDriver   string
 	ForwardNodeIP bool
+	NATTraversal  bool
 }
 
 type ProxyOptions struct {
@@ -84,6 +85,7 @@ func (o *AgentOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.VPNDriver, "vpn-driver", o.VPNDriver, `The VPN driver name. (default "libreswan")`)
 	fs.StringVar(&o.RouteDriver, "route-driver", o.RouteDriver, `The Route driver name. (default "vxlan")`)
 	fs.BoolVar(&o.ForwardNodeIP, "forward-node-ip", o.ForwardNodeIP, `Forward node IP or not. (default "false")`)
+	fs.BoolVar(&o.NATTraversal, "nat-traversal", o.NATTraversal, `Enable NAT Traversal or not. (default "false")`)
 	fs.StringVar(&o.MetricsBindAddress, "metric-bind-addr", o.MetricsBindAddress, `Binding address of tunnel metrics. (default ":10265")`)
 	fs.StringVar(&o.VPNPort, "vpn-bind-port", o.VPNPort, `Binding port of vpn. (default ":4500")`)
 	fs.StringVar(&o.ProxyMetricsAddress, "proxy-metric-bind-addr", o.ProxyMetricsAddress, `Binding address of proxy metrics. (default ":10266")`)
@@ -125,6 +127,7 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 		VPNDriver:     o.VPNDriver,
 		RouteDriver:   o.RouteDriver,
 		ForwardNodeIP: o.ForwardNodeIP,
+		NATTraversal:  o.NATTraversal,
 	}
 	c.Proxy = &config.ProxyConfig{
 		ProxyMetricsAddress:     o.ProxyMetricsAddress,

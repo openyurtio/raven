@@ -11,6 +11,7 @@ apiVersion: v1
 data:
   vpn-driver: {{ .Values.vpn.driver }}
   forward-node-ip: {{ .Values.vpn.forwardNodeIP | quote }}
+  nat-traversal: {{ .Values.vpn.natTraversal | quote }}
   metric-bind-addr: {{ .Values.vpn.metricBindAddr }}
   tunnel-bind-addr: {{ .Values.vpn.tunnelAddr }}
   proxy-external-addr: {{ .Values.proxy.externalAddr }}

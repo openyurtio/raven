@@ -43,6 +43,11 @@ spec:
                 configMapKeyRef:
                   name: agent-config
                   key: forward-node-ip
+            - name: NAT_TRAVERSAL
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: nat-traversal
             - name: METRIC_BIND_ADDR
               valueFrom:
                 configMapKeyRef:

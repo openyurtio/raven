@@ -53,6 +53,9 @@ func (t *TunnelEngine) processNextWorkItem() bool {
 
 func (t *TunnelEngine) handler(gw *v1beta1.Gateway) error {
 	klog.Info(utils.FormatRavenEngine("update raven l3 tunnel config for gateway %s", gw.GetName()))
+	if err := t.checkNatCapability(); err != nil {
+		return err
+	}
 	if t.routeDriver == nil || t.vpnDriver == nil {
 		err := t.initDriver()
 		if err != nil {
@@ -101,6 +104,24 @@ func (t *TunnelEngine) clearDriver() error {
 	if err != nil {
 		klog.Errorf(utils.FormatRavenEngine("fail to cleanup vpn driver: %s", err.Error()))
 	}
+	return nil
+}
+
+func (t *TunnelEngine) checkNatCapability() error {
+	natType, err := utils.GetNATType()
+	if err != nil {
+		return err
+	}
+
+	if natType == utils.NATSymmetric {
+		return nil
+	}
+
+	_, err = utils.GetPublicPort()
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 

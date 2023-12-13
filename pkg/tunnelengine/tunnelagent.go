@@ -86,12 +86,20 @@ func (c *TunnelHandler) Handler() error {
 	for i := range gws.Items {
 		// try to update public IP if empty.
 		gw := &gws.Items[i]
-		if ep := getTunnelActiveEndpoints(gw); ep != nil && ep.PublicIP == "" {
-			err := c.configGatewayPublicIP(gw)
-			if err != nil {
-				klog.ErrorS(err, "error config gateway public ip", "gateway", klog.KObj(gw))
+		if ep := getTunnelActiveEndpoints(gw); ep != nil {
+			if ep.PublicIP == "" || ep.NATType == "" || ep.PublicPort == 0 && ep.NATType != utils.NATSymmetric {
+				if ep.PublicIP == "" {
+					if err := c.configGatewayPublicIP(gw); err != nil {
+						klog.ErrorS(err, "error config gateway public ip", "gateway", klog.KObj(gw))
+					}
+				}
+				if ep.NATType == "" || ep.PublicPort == 0 && ep.NATType != utils.NATSymmetric {
+					if err := c.configGatewayStunInfo(gw); err != nil {
+						klog.ErrorS(err, "error config gateway stun info", "gateway", klog.KObj(gw))
+					}
+				}
+				continue
 			}
-			continue
 		}
 		if !c.shouldHandleGateway(gw) {
 			continue
@@ -170,8 +178,10 @@ func (c *TunnelHandler) syncGateway(gw *v1beta1.Gateway) {
 		NodeName:    types.NodeName(aep.NodeName),
 		Subnets:     subnets,
 		PrivateIP:   nodeInfo.PrivateIP,
+		PublicPort:  aep.PublicPort,
 		PublicIP:    aep.PublicIP,
 		UnderNAT:    aep.UnderNAT,
+		NATType:     aep.NATType,
 		Config:      cfg,
 	}
 	var isLocalGateway bool
@@ -195,12 +205,21 @@ func (c *TunnelHandler) syncGateway(gw *v1beta1.Gateway) {
 }
 
 func (c *TunnelHandler) shouldHandleGateway(gateway *v1beta1.Gateway) bool {
-	if getTunnelActiveEndpoints(gateway) == nil {
+	ep := getTunnelActiveEndpoints(gateway)
+	if ep == nil {
 		klog.InfoS("no active endpoint , waiting for sync", "gateway", klog.KObj(gateway))
 		return false
 	}
-	if getTunnelActiveEndpoints(gateway).PublicIP == "" {
+	if ep.PublicIP == "" {
 		klog.InfoS("no public IP for gateway, waiting for sync", "gateway", klog.KObj(gateway))
+		return false
+	}
+	if ep.NATType == "" {
+		klog.InfoS("no nat type for gateway, waiting for sync", "gateway", klog.KObj(gateway))
+		return false
+	}
+	if ep.NATType != utils.NATSymmetric && ep.PublicPort == 0 {
+		klog.InfoS("no public port for gateway, waiting for sync", "gateway", klog.KObj(gateway))
 		return false
 	}
 	if c.ownGateway == nil {
@@ -241,6 +260,49 @@ func (c *TunnelHandler) configGatewayPublicIP(gateway *v1beta1.Gateway) error {
 		for k, v := range apiGw.Spec.Endpoints {
 			if v.NodeName == c.nodeName && v.Type == v1beta1.Tunnel {
 				apiGw.Spec.Endpoints[k].PublicIP = publicIP
+				err = c.ravenClient.Update(context.Background(), &apiGw)
+				return err
+			}
+		}
+		return nil
+	})
+	return err
+}
+
+func (c *TunnelHandler) configGatewayStunInfo(gateway *v1beta1.Gateway) error {
+	if getTunnelActiveEndpoints(gateway).NodeName != c.nodeName {
+		return nil
+	}
+
+	natType, err := utils.GetNATType()
+	if err != nil {
+		return err
+	}
+
+	var publicPort int
+	if natType != utils.NATSymmetric {
+		publicPort, err = utils.GetPublicPort()
+		if err != nil {
+			return err
+		}
+	}
+
+	// retry to update nat type of localGateway
+	err = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		// get localGateway from api server
+		var apiGw v1beta1.Gateway
+		err := c.ravenClient.Get(context.Background(), client.ObjectKey{
+			Name: gateway.Name,
+		}, &apiGw)
+		if err != nil {
+			return err
+		}
+		for k, v := range apiGw.Spec.Endpoints {
+			if v.NodeName == c.nodeName {
+				apiGw.Spec.Endpoints[k].NATType = natType
+				if natType != utils.NATSymmetric {
+					apiGw.Spec.Endpoints[k].PublicPort = publicPort
+				}
 				err = c.ravenClient.Update(context.Background(), &apiGw)
 				return err
 			}
