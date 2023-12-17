@@ -16,7 +16,6 @@ spec:
                     values:
                       - virtual-kubelet
       nodeSelector:
-        kubernetes.io/arch: amd64
         kubernetes.io/os: linux
       tolerations:
         - operator: Exists
