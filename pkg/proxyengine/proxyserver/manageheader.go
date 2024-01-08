@@ -159,17 +159,16 @@ func (h *headerManger) getAPIServerRequestDestAddress(r *http.Request) (name, ip
 }
 
 func (h *headerManger) getNormalRequestDestAddress(r *http.Request) (name, ip, port string, err error) {
-	var nodeName string
-	nodeName, port, err = net.SplitHostPort(r.Host)
-	if err != nil {
-		return "", "", "", err
-	}
+	nodeName := r.Header.Get(utils.RavenProxyHostHeaderKey)
 	if nodeName == "" {
-		nodeName = r.Header.Get(utils.RavenProxyHostHeaderKey)
+		nodeName, port, err = net.SplitHostPort(r.Host)
+		if err != nil {
+			return "", "", "", err
+		}
 	}
 	ipAddress := net.ParseIP(nodeName)
 	if ipAddress != nil {
-		klog.Warning(utils.FormatProxyServer("raven proxy server not support request.Host is %s", r.Host))
+		klog.Warning(utils.FormatProxyServer("raven proxy server not support dest address %s and request.URL is %s", ipAddress, r.URL.String()))
 		return "", "", "", nil
 	}
 	var node v1.Node

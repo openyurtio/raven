@@ -20,6 +20,26 @@ spec:
       - image: {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         name: raven-agent
+        livenessProbe:
+          failureThreshold: 10
+          httpGet:
+            path: /healthz
+            port: 10275
+            scheme: HTTP
+          initialDelaySeconds: 20
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 15
+        readinessProbe:
+          failureThreshold: 10
+          httpGet:
+            path: /readyz
+            port: 10275
+            scheme: HTTP
+          initialDelaySeconds: 20
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 15
         securityContext:
           {{- toYaml .Values.securityContext | nindent 12 }}
         {{- with .Values.containerEnv }}
@@ -32,6 +52,7 @@ spec:
           - --forward-node-ip={{.Values.vpn.forwardNodeIP}}
           - --nat-traversal={{.Values.vpn.natTraversal}}
           - --metric-bind-addr={{.Values.vpn.metricBindAddr}}
+          - --health-probe-addr={{.Values.healthyBindAddr}}
           - --vpn-bind-port={{.Values.vpn.tunnelAddr}}
           - --proxy-metric-bind-addr={{.Values.proxy.metricsBindAddr}}
           - --proxy-internal-secure-addr={{.Values.proxy.internalSecureAddr}}
