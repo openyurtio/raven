@@ -433,7 +433,7 @@ func whackCmdFn(args ...string) error {
 		time.Sleep(1 * time.Second)
 	}
 	if err != nil {
-		return fmt.Errorf("error whacking with %v: %v", args, err)
+		return fmt.Errorf("error whacking with %v: %v, error %s", args, err, string(output))
 	}
 	return nil
 }

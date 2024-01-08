@@ -78,6 +78,7 @@ func (c *ProxyClient) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to new cert manager factory for proxy client %s, error %s", c.name, err.Error())
 	}
 	clientCertManager.Start()
+	defer clientCertManager.Stop()
 	_ = wait.PollUntil(5*time.Second, func() (bool, error) {
 		if clientCertManager.Current() != nil {
 			return true, nil

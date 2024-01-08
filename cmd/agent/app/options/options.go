@@ -3,7 +3,6 @@ package options
 import (
 	"errors"
 	"fmt"
-
 	"net"
 	"os"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/openyurtio/api/raven/v1beta1"
@@ -28,6 +28,7 @@ import (
 const (
 	DefaultTunnelMetricsPort = 10265
 	DefaultProxyMetricsPort  = 10266
+	DefaultHealthyProbeAddr  = 10275
 )
 
 // AgentOptions has the information that required by the raven agent
@@ -38,6 +39,7 @@ type AgentOptions struct {
 	NodeIP             string
 	Kubeconfig         string
 	MetricsBindAddress string
+	HealthProbeAddr    string
 }
 
 type TunnelOptions struct {
@@ -87,6 +89,8 @@ func (o *AgentOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&o.ForwardNodeIP, "forward-node-ip", o.ForwardNodeIP, `Forward node IP or not. (default "false")`)
 	fs.BoolVar(&o.NATTraversal, "nat-traversal", o.NATTraversal, `Enable NAT Traversal or not. (default "false")`)
 	fs.StringVar(&o.MetricsBindAddress, "metric-bind-addr", o.MetricsBindAddress, `Binding address of tunnel metrics. (default ":10265")`)
+	fs.StringVar(&o.HealthProbeAddr, "health-probe-addr", o.HealthProbeAddr, `The address the healthz/readyz endpoint binds to.. (default ":10275")`)
+
 	fs.StringVar(&o.VPNPort, "vpn-bind-port", o.VPNPort, `Binding port of vpn. (default ":4500")`)
 	fs.StringVar(&o.ProxyMetricsAddress, "proxy-metric-bind-addr", o.ProxyMetricsAddress, `Binding address of proxy metrics. (default ":10266")`)
 	fs.StringVar(&o.InternalSecureAddress, "proxy-internal-secure-addr", o.InternalSecureAddress, `Binding secure address of proxy server. (default ":10263")`)
@@ -114,7 +118,8 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 	cfg = restclient.AddUserAgent(cfg, "raven-agent-ds")
 	c.KubeConfig = cfg
 	c.MetricsBindAddress = resolveAddress(c.MetricsBindAddress, c.NodeIP, strconv.Itoa(DefaultTunnelMetricsPort))
-	c.Manager, err = newMgr(cfg, c.MetricsBindAddress)
+	c.HealthProbeAddr = resolveAddress(c.HealthProbeAddr, c.NodeIP, strconv.Itoa(DefaultHealthyProbeAddr))
+	c.Manager, err = newMgr(cfg, c.MetricsBindAddress, c.HealthProbeAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create manager: %s", err)
 	}
@@ -171,14 +176,15 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 	return c, err
 }
 
-func newMgr(cfg *restclient.Config, metricsBindAddress string) (manager.Manager, error) {
+func newMgr(cfg *restclient.Config, metricsBindAddress, healthyProbeAddress string) (manager.Manager, error) {
 	scheme := runtime.NewScheme()
 	_ = v1.AddToScheme(scheme)
 	_ = v1beta1.AddToScheme(scheme)
 
 	opt := ctrl.Options{
-		Scheme:             scheme,
-		MetricsBindAddress: metricsBindAddress,
+		Scheme:                 scheme,
+		MetricsBindAddress:     metricsBindAddress,
+		HealthProbeBindAddress: healthyProbeAddress,
 	}
 
 	mgr, err := ctrl.NewManager(cfg, opt)
@@ -186,10 +192,23 @@ func newMgr(cfg *restclient.Config, metricsBindAddress string) (manager.Manager,
 		klog.ErrorS(err, "failed to new manager for raven agent controller")
 		return nil, err
 	}
+
+	if err = mgr.AddHealthzCheck("health", healthz.Ping); err != nil {
+		klog.ErrorS(err, "unable to set up health check")
+		os.Exit(1)
+	}
+	if err = mgr.AddReadyzCheck("check", healthz.Ping); err != nil {
+		klog.ErrorS(err, "unable to set up ready check")
+		os.Exit(1)
+	}
+
 	return mgr, nil
 }
 
 func resolveAddress(srcAddr, defaultHost, defaultPort string) string {
+	if srcAddr == "" {
+		return net.JoinHostPort(defaultHost, defaultPort)
+	}
 	host, port, err := net.SplitHostPort(srcAddr)
 	if err != nil {
 		return net.JoinHostPort(defaultHost, defaultPort)

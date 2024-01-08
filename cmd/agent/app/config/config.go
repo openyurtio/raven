@@ -26,10 +26,12 @@ type Config struct {
 	NodeName           string
 	NodeIP             string
 	MetricsBindAddress string
-	KubeConfig         *rest.Config
-	Manager            manager.Manager
-	Tunnel             *TunnelConfig
-	Proxy              *ProxyConfig
+	HealthProbeAddr    string
+
+	KubeConfig *rest.Config
+	Manager    manager.Manager
+	Tunnel     *TunnelConfig
+	Proxy      *ProxyConfig
 }
 
 type TunnelConfig struct {
