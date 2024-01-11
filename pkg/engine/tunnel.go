@@ -53,8 +53,10 @@ func (t *TunnelEngine) processNextWorkItem() bool {
 
 func (t *TunnelEngine) handler(gw *v1beta1.Gateway) error {
 	klog.Info(utils.FormatRavenEngine("update raven l3 tunnel config for gateway %s", gw.GetName()))
-	if err := t.checkNatCapability(); err != nil {
-		return err
+	if t.config.Tunnel.NATTraversal {
+		if err := t.checkNatCapability(); err != nil {
+			return err
+		}
 	}
 
 	err := t.initDriver()
@@ -97,7 +99,7 @@ func (t *TunnelEngine) initDriver() error {
 	}
 
 	if t.tunnelHandler == nil {
-		t.tunnelHandler = tunnelengine.NewTunnelHandler(t.nodeName, t.config.Tunnel.ForwardNodeIP, t.client, t.routeDriver, t.vpnDriver)
+		t.tunnelHandler = tunnelengine.NewTunnelHandler(t.nodeName, t.config.Tunnel.ForwardNodeIP, t.config.Tunnel.NATTraversal, t.client, t.routeDriver, t.vpnDriver)
 	}
 	return nil
 }

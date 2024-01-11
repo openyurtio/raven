@@ -41,6 +41,7 @@ import (
 type TunnelHandler struct {
 	nodeName      string
 	forwardNodeIP bool
+	natTraversal  bool
 	ownGateway    *v1beta1.Gateway
 
 	ravenClient client.Client
@@ -52,10 +53,11 @@ type TunnelHandler struct {
 	lastSeenNetwork *types.Network
 }
 
-func NewTunnelHandler(nodeName string, forwardNodeIP bool, client client.Client, routeDriver routedriver.Driver, vpnDriver vpndriver.Driver) *TunnelHandler {
+func NewTunnelHandler(nodeName string, forwardNodeIP bool, natTraversal bool, client client.Client, routeDriver routedriver.Driver, vpnDriver vpndriver.Driver) *TunnelHandler {
 	return &TunnelHandler{
 		nodeName:      nodeName,
 		forwardNodeIP: forwardNodeIP,
+		natTraversal:  natTraversal,
 		ravenClient:   client,
 		routeDriver:   routeDriver,
 		vpnDriver:     vpnDriver,
@@ -87,13 +89,13 @@ func (c *TunnelHandler) Handler() error {
 		// try to update public IP if empty.
 		gw := &gws.Items[i]
 		if ep := getTunnelActiveEndpoints(gw); ep != nil {
-			if ep.PublicIP == "" || ep.NATType == "" || ep.PublicPort == 0 && ep.NATType != utils.NATSymmetric {
+			if ep.PublicIP == "" || c.natTraversal && (ep.NATType == "" || ep.PublicPort == 0 && ep.NATType != utils.NATSymmetric) {
 				if ep.PublicIP == "" {
 					if err := c.configGatewayPublicIP(gw); err != nil {
 						klog.ErrorS(err, "error config gateway public ip", "gateway", klog.KObj(gw))
 					}
 				}
-				if ep.NATType == "" || ep.PublicPort == 0 && ep.NATType != utils.NATSymmetric {
+				if c.natTraversal && (ep.NATType == "" || ep.PublicPort == 0 && ep.NATType != utils.NATSymmetric) {
 					if err := c.configGatewayStunInfo(gw); err != nil {
 						klog.ErrorS(err, "error config gateway stun info", "gateway", klog.KObj(gw))
 					}
@@ -214,13 +216,15 @@ func (c *TunnelHandler) shouldHandleGateway(gateway *v1beta1.Gateway) bool {
 		klog.InfoS("no public IP for gateway, waiting for sync", "gateway", klog.KObj(gateway))
 		return false
 	}
-	if ep.NATType == "" {
-		klog.InfoS("no nat type for gateway, waiting for sync", "gateway", klog.KObj(gateway))
-		return false
-	}
-	if ep.NATType != utils.NATSymmetric && ep.PublicPort == 0 {
-		klog.InfoS("no public port for gateway, waiting for sync", "gateway", klog.KObj(gateway))
-		return false
+	if c.natTraversal {
+		if ep.NATType == "" {
+			klog.InfoS("no nat type for gateway, waiting for sync", "gateway", klog.KObj(gateway))
+			return false
+		}
+		if ep.NATType != utils.NATSymmetric && ep.PublicPort == 0 {
+			klog.InfoS("no public port for gateway, waiting for sync", "gateway", klog.KObj(gateway))
+			return false
+		}
 	}
 	if c.ownGateway == nil {
 		klog.InfoS(fmt.Sprintf("no own gateway for node %s, skip it", c.nodeName), "gateway", klog.KObj(gateway))
