@@ -71,16 +71,17 @@ func (h *headerManger) Handler(handler http.Handler) http.Handler {
 			return
 		}
 		oldHost := r.Host
-		klog.Info(utils.FormatProxyServer("request with host %s and url %s is processed by header manager", oldHost, r.URL.String()))
 		var host, ip, port string
 		var err error
 		if isAPIServerRequest(r) {
+			klog.Info(utils.FormatProxyServer("request from apiserver with host %s and url %s is processed by header manager", oldHost, r.URL.String()))
 			host, ip, port, err = h.getAPIServerRequestDestAddress(r)
 			if err != nil {
 				logAndHTTPError(w, http.StatusBadRequest, "request host %s and url %s is invalid, %s", r.Host, r.URL.String(), err.Error())
 				return
 			}
 		} else {
+			klog.Info(utils.FormatProxyServer("normal request with host %s and url %s is processed by header manager", oldHost, r.URL.String()))
 			host, ip, port, err = h.getNormalRequestDestAddress(r)
 			if err != nil {
 				logAndHTTPError(w, http.StatusBadRequest, "request host %s and url %s is invalid, %s", r.Host, r.URL.String(), err.Error())
