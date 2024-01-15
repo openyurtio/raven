@@ -54,6 +54,8 @@ spec:
           - --metric-bind-addr={{.Values.vpn.metricBindAddr}}
           - --health-probe-addr={{.Values.healthyBindAddr}}
           - --vpn-bind-port={{.Values.vpn.tunnelAddr}}
+          - --keep-alive-interval={{.Values.vpn.keepAliveInterval}}
+          - --keep-alive-timeout={{.Values.vpn.keepAliveTimeout}}
           - --proxy-metric-bind-addr={{.Values.proxy.metricsBindAddr}}
           - --proxy-internal-secure-addr={{.Values.proxy.internalSecureAddr}}
           - --proxy-internal-insecure-addr={{.Values.proxy.internalInsecureAddr}}

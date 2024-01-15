@@ -78,12 +78,13 @@ type wireguard struct {
 	psk        wgtypes.Key
 	wgLink     netlink.Link
 
-	relayConnections map[string]*vpndriver.Connection
-	edgeConnections  map[string]*vpndriver.Connection
-	iptables         iptablesutil.IPTablesInterface
-	nodeName         types.NodeName
-	ravenClient      client.Client
-	listenPort       int
+	relayConnections  map[string]*vpndriver.Connection
+	edgeConnections   map[string]*vpndriver.Connection
+	iptables          iptablesutil.IPTablesInterface
+	nodeName          types.NodeName
+	ravenClient       client.Client
+	listenPort        int
+	keepaliveInterval int
 }
 
 func New(cfg *config.Config) (vpndriver.Driver, error) {
@@ -92,11 +93,12 @@ func New(cfg *config.Config) (vpndriver.Driver, error) {
 		port = DefaultListenPort
 	}
 	return &wireguard{
-		relayConnections: make(map[string]*vpndriver.Connection),
-		edgeConnections:  make(map[string]*vpndriver.Connection),
-		nodeName:         types.NodeName(cfg.NodeName),
-		ravenClient:      cfg.Manager.GetClient(),
-		listenPort:       port,
+		relayConnections:  make(map[string]*vpndriver.Connection),
+		edgeConnections:   make(map[string]*vpndriver.Connection),
+		nodeName:          types.NodeName(cfg.NodeName),
+		ravenClient:       cfg.Manager.GetClient(),
+		listenPort:        port,
+		keepaliveInterval: cfg.Tunnel.KeepAliveInterval,
 	}, nil
 }
 
@@ -266,13 +268,13 @@ func (w *wireguard) createEdgeConnections(desiredEdgeConns map[string]*vpndriver
 		klog.InfoS("create edge-to-edge connection", "c", newConn)
 
 		allowedIPs := parseSubnets(newConn.RemoteEndpoint.Subnets)
+		ka := time.Duration(w.keepaliveInterval)
 		var remotePort int
 		if newConn.RemoteEndpoint.NATType == utils.NATSymmetric {
 			remotePort = w.listenPort
 		} else {
 			remotePort = newConn.RemoteEndpoint.PublicPort
 		}
-		ka := KeepAliveInterval
 		peerConfigs = append(peerConfigs, wgtypes.PeerConfig{
 			PublicKey:    *newKey,
 			Remove:       false,
@@ -282,6 +284,7 @@ func (w *wireguard) createEdgeConnections(desiredEdgeConns map[string]*vpndriver
 				IP:   net.ParseIP(newConn.RemoteEndpoint.PublicIP),
 				Port: remotePort,
 			},
+
 			PersistentKeepaliveInterval: &ka,
 			ReplaceAllowedIPs:           true,
 			AllowedIPs:                  allowedIPs,
