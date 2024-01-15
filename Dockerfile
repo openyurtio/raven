@@ -15,9 +15,10 @@ COPY cmd/ cmd/
 
 ARG TARGETOS
 ARG TARGETARCH
+ARG GITCOMMIT
 
 # Build
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=on go build -a -o raven-agent-ds cmd/agent/main.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=on go build -ldflags "-X main.GitCommit=${GITCOMMIT}" -a -o raven-agent-ds cmd/agent/main.go
 
 
 FROM alpine:3.17

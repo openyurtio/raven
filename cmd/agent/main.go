@@ -27,10 +27,13 @@ import (
 	"github.com/openyurtio/raven/cmd/agent/app"
 )
 
+var GitCommit string
+
 func main() {
 	klog.InitFlags(nil)
 	defer klog.Flush()
 	rand.Seed(time.Now().UnixNano())
+	klog.Infof("component: %s, git commit: %s\n", "raven-agent-ds", GitCommit)
 	cmd := app.NewRavenAgentCommand(server.SetupSignalContext())
 	cmd.Flags().AddGoFlagSet(flag.CommandLine)
 	if err := cmd.Execute(); err != nil {
