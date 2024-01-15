@@ -58,13 +58,14 @@ const (
 )
 
 type libreswan struct {
-	relayConnections map[string]*vpndriver.Connection
-	edgeConnections  map[string]*vpndriver.Connection
-	nodeName         types.NodeName
-	listenPort       string
-	centralGw        *types.Endpoint
-
-	iptables iptablesutil.IPTablesInterface
+	relayConnections  map[string]*vpndriver.Connection
+	edgeConnections   map[string]*vpndriver.Connection
+	nodeName          types.NodeName
+	centralGw         *types.Endpoint
+	iptables          iptablesutil.IPTablesInterface
+	listenPort        string
+	keepaliveInterval int
+	keepaliveTimeout  int
 }
 
 func (l *libreswan) Init() (err error) {
@@ -94,10 +95,12 @@ func (l *libreswan) Init() (err error) {
 
 func New(cfg *config.Config) (vpndriver.Driver, error) {
 	return &libreswan{
-		relayConnections: make(map[string]*vpndriver.Connection),
-		edgeConnections:  make(map[string]*vpndriver.Connection),
-		nodeName:         types.NodeName(cfg.NodeName),
-		listenPort:       cfg.Tunnel.VPNPort,
+		relayConnections:  make(map[string]*vpndriver.Connection),
+		edgeConnections:   make(map[string]*vpndriver.Connection),
+		nodeName:          types.NodeName(cfg.NodeName),
+		listenPort:        cfg.Tunnel.VPNPort,
+		keepaliveInterval: cfg.Tunnel.KeepAliveInterval,
+		keepaliveTimeout:  cfg.Tunnel.KeepAliveTimeout,
 	}, nil
 }
 
@@ -362,6 +365,10 @@ func (l *libreswan) whackConnectToEndpoint(connectionName string, connection *vp
 			"--client", connection.RemoteSubnet)
 	}
 
+	if l.keepaliveInterval > 0 && l.keepaliveTimeout > 0 {
+		args = append(args, "--dpddelay", strconv.Itoa(l.keepaliveInterval), "--dpdtimeout", strconv.Itoa(l.keepaliveTimeout), "--dpdaction", "restart")
+	}
+
 	if err := whackCmd(args...); err != nil {
 		return err
 	}
@@ -406,6 +413,10 @@ func (l *libreswan) whackConnectToEdgeEndpoint(connectionName string, connection
 		"--host", connection.RemoteEndpoint.PublicIP,
 		"--client", connection.RemoteSubnet,
 		"--ikeport", strconv.Itoa(connection.RemoteEndpoint.PublicPort))
+
+	if l.keepaliveInterval > 0 && l.keepaliveTimeout > 0 {
+		args = append(args, "--dpddelay", strconv.Itoa(l.keepaliveInterval), "--dpdtimeout", strconv.Itoa(l.keepaliveTimeout), "--dpdaction", "restart")
+	}
 
 	if err := whackCmd(args...); err != nil {
 		return err

@@ -35,11 +35,13 @@ type Config struct {
 }
 
 type TunnelConfig struct {
-	VPNDriver     string
-	VPNPort       string
-	RouteDriver   string
-	ForwardNodeIP bool
-	NATTraversal  bool
+	VPNDriver         string
+	VPNPort           string
+	RouteDriver       string
+	ForwardNodeIP     bool
+	NATTraversal      bool
+	KeepAliveInterval int
+	KeepAliveTimeout  int
 }
 
 type ProxyConfig struct {

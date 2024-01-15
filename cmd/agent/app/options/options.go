@@ -43,11 +43,13 @@ type AgentOptions struct {
 }
 
 type TunnelOptions struct {
-	VPNDriver     string
-	VPNPort       string
-	RouteDriver   string
-	ForwardNodeIP bool
-	NATTraversal  bool
+	VPNDriver         string
+	VPNPort           string
+	RouteDriver       string
+	ForwardNodeIP     bool
+	NATTraversal      bool
+	KeepAliveInterval int
+	KeepAliveTimeout  int
 }
 
 type ProxyOptions struct {
@@ -92,6 +94,8 @@ func (o *AgentOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.HealthProbeAddr, "health-probe-addr", o.HealthProbeAddr, `The address the healthz/readyz endpoint binds to.. (default ":10275")`)
 
 	fs.StringVar(&o.VPNPort, "vpn-bind-port", o.VPNPort, `Binding port of vpn. (default ":4500")`)
+	fs.IntVar(&o.KeepAliveInterval, "keep-alive-interval", o.KeepAliveInterval, `Interval for sending keepalive packets in the VPN tunnel, (default "0", closed)`)
+	fs.IntVar(&o.KeepAliveTimeout, "keep-alive-timeout", o.KeepAliveTimeout, `Timeout for sending keepalive packets in the VPN tunnel, (default "0", closed)`)
 	fs.StringVar(&o.ProxyMetricsAddress, "proxy-metric-bind-addr", o.ProxyMetricsAddress, `Binding address of proxy metrics. (default ":10266")`)
 	fs.StringVar(&o.InternalSecureAddress, "proxy-internal-secure-addr", o.InternalSecureAddress, `Binding secure address of proxy server. (default ":10263")`)
 	fs.StringVar(&o.InternalInsecureAddress, "proxy-internal-insecure-addr", o.InternalInsecureAddress, `Binding insecure address of proxy server. (default ":10264")`)
@@ -106,16 +110,15 @@ func (o *AgentOptions) AddFlags(fs *pflag.FlagSet) {
 // Config return a raven agent config objective
 func (o *AgentOptions) Config() (*config.Config, error) {
 	var err error
-	c := &config.Config{
-		NodeName:           o.NodeName,
-		NodeIP:             o.NodeIP,
-		MetricsBindAddress: o.MetricsBindAddress,
-	}
 	cfg, err := clientcmd.BuildConfigFromFlags("", o.Kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kube client: %s", err)
 	}
 	cfg = restclient.AddUserAgent(cfg, "raven-agent-ds")
+	c := &config.Config{
+		NodeName: o.NodeName,
+		NodeIP:   o.NodeIP,
+	}
 	c.KubeConfig = cfg
 	c.MetricsBindAddress = resolveAddress(c.MetricsBindAddress, c.NodeIP, strconv.Itoa(DefaultTunnelMetricsPort))
 	c.HealthProbeAddr = resolveAddress(c.HealthProbeAddr, c.NodeIP, strconv.Itoa(DefaultHealthyProbeAddr))
@@ -128,11 +131,13 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 		port = strconv.Itoa(v1beta1.DefaultTunnelServerExposedPort)
 	}
 	c.Tunnel = &config.TunnelConfig{
-		VPNPort:       port,
-		VPNDriver:     o.VPNDriver,
-		RouteDriver:   o.RouteDriver,
-		ForwardNodeIP: o.ForwardNodeIP,
-		NATTraversal:  o.NATTraversal,
+		VPNPort:           port,
+		VPNDriver:         o.VPNDriver,
+		RouteDriver:       o.RouteDriver,
+		ForwardNodeIP:     o.ForwardNodeIP,
+		NATTraversal:      o.NATTraversal,
+		KeepAliveInterval: o.KeepAliveInterval,
+		KeepAliveTimeout:  o.KeepAliveTimeout,
 	}
 	c.Proxy = &config.ProxyConfig{
 		ProxyMetricsAddress:     o.ProxyMetricsAddress,

@@ -56,13 +56,13 @@ func (t *TunnelEngine) handler(gw *v1beta1.Gateway) error {
 	if err := t.checkNatCapability(); err != nil {
 		return err
 	}
-	if t.routeDriver == nil || t.vpnDriver == nil {
-		err := t.initDriver()
-		if err != nil {
-			klog.Errorf(utils.FormatRavenEngine("failed to init raven l3 tunnel engine"))
-		}
+
+	err := t.initDriver()
+	if err != nil {
+		klog.Errorf(utils.FormatRavenEngine("failed to init raven l3 tunnel engine"))
 	}
-	err := t.tunnelHandler.Handler()
+
+	err = t.tunnelHandler.Handler()
 	if err != nil {
 		return err
 	}
@@ -71,27 +71,34 @@ func (t *TunnelEngine) handler(gw *v1beta1.Gateway) error {
 }
 
 func (t *TunnelEngine) initDriver() error {
-	routeDriver, err := routedriver.New(t.config.Tunnel.RouteDriver, t.config)
-	if err != nil {
-		return fmt.Errorf("fail to create route driver: %s, %s", t.config.Tunnel.RouteDriver, err)
+	var err error
+	if t.routeDriver == nil {
+		t.routeDriver, err = routedriver.New(t.config.Tunnel.RouteDriver, t.config)
+		if err != nil {
+			return fmt.Errorf("fail to create route driver: %s, %s", t.config.Tunnel.RouteDriver, err)
+		}
+		err = t.routeDriver.Init()
+		if err != nil {
+			return fmt.Errorf("fail to initialize route driver: %s, %s", t.config.Tunnel.RouteDriver, err)
+		}
+		klog.Info(utils.FormatRavenEngine("route driver %s initialized", t.config.Tunnel.RouteDriver))
 	}
-	err = routeDriver.Init()
-	if err != nil {
-		return fmt.Errorf("fail to initialize route driver: %s, %s", t.config.Tunnel.RouteDriver, err)
+
+	if t.vpnDriver == nil {
+		t.vpnDriver, err = vpndriver.New(t.config.Tunnel.VPNDriver, t.config)
+		if err != nil {
+			return fmt.Errorf("fail to create vpn driver: %s, %s", t.config.Tunnel.VPNDriver, err)
+		}
+		err = t.vpnDriver.Init()
+		if err != nil {
+			return fmt.Errorf("fail to initialize vpn driver: %s, %s", t.config.Tunnel.VPNDriver, err)
+		}
+		klog.Info(utils.FormatRavenEngine("VPN driver %s initialized", t.config.Tunnel.VPNDriver))
 	}
-	t.routeDriver = routeDriver
-	klog.Info(utils.FormatRavenEngine("route driver %s initialized", t.config.Tunnel.RouteDriver))
-	vpnDriver, err := vpndriver.New(t.config.Tunnel.VPNDriver, t.config)
-	if err != nil {
-		return fmt.Errorf("fail to create vpn driver: %s, %s", t.config.Tunnel.VPNDriver, err)
+
+	if t.tunnelHandler == nil {
+		t.tunnelHandler = tunnelengine.NewTunnelHandler(t.nodeName, t.config.Tunnel.ForwardNodeIP, t.client, t.routeDriver, t.vpnDriver)
 	}
-	err = vpnDriver.Init()
-	if err != nil {
-		return fmt.Errorf("fail to initialize vpn driver: %s, %s", t.config.Tunnel.VPNDriver, err)
-	}
-	klog.Info(utils.FormatRavenEngine("VPN driver %s initialized", t.config.Tunnel.VPNDriver))
-	t.vpnDriver = vpnDriver
-	t.tunnelHandler = tunnelengine.NewTunnelHandler(t.nodeName, t.config.Tunnel.ForwardNodeIP, t.client, t.routeDriver, t.vpnDriver)
 	return nil
 }
 

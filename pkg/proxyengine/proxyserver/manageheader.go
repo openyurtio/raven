@@ -160,7 +160,8 @@ func (h *headerManger) getAPIServerRequestDestAddress(r *http.Request) (name, ip
 
 func (h *headerManger) getNormalRequestDestAddress(r *http.Request) (name, ip, port string, err error) {
 	nodeName := r.Header.Get(utils.RavenProxyHostHeaderKey)
-	if nodeName == "" {
+	_, port, _ = net.SplitHostPort(r.Header.Get(utils.RavenProxyDestHeaderKey))
+	if nodeName == "" || port == "" {
 		nodeName, port, err = net.SplitHostPort(r.Host)
 		if err != nil {
 			return "", "", "", err

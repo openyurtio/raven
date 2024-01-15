@@ -63,6 +63,9 @@ func Run(ctx context.Context, cfg *config.CompletedConfig) error {
 	if err := disableICMPRedirect(); err != nil {
 		return err
 	}
+	if err := disableICMPRpFilter(); err != nil {
+		return err
+	}
 	engine := ravenengine.NewEngine(ctx, cfg.Config)
 	engine.Start()
 	return nil
@@ -70,6 +73,23 @@ func Run(ctx context.Context, cfg *config.CompletedConfig) error {
 
 func disableICMPRedirect() error {
 	obj := "net.ipv4.conf.all.send_redirects"
+	val, err := sysctl.Get(obj)
+	if err != nil {
+		klog.ErrorS(err, "failed to sysctl get", obj)
+		return err
+	}
+	if val != "0" {
+		err = sysctl.Set(obj, "0")
+		if err != nil {
+			klog.ErrorS(err, "failed to sysctl set", obj)
+			return err
+		}
+	}
+	return nil
+}
+
+func disableICMPRpFilter() error {
+	obj := "net.ipv4.conf.default.rp_filter"
 	val, err := sysctl.Get(obj)
 	if err != nil {
 		klog.ErrorS(err, "failed to sysctl get", obj)
