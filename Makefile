@@ -10,6 +10,8 @@ BUILDPLATFORM ?= linux/amd64
 TARGETOS ?= linux
 TARGETARCH ?= amd64
 
+GITCOMMIT = $(shell git rev-parse HEAD)
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -58,7 +60,7 @@ run: fmt vet ## Run a controller from your host.
 	go run cmd/agent/main.go
 
 docker-build:## Build docker image with the agent.
-	docker build --platform=${BUILDPLATFORM} --build-arg TARGETOS=${TARGETOS} --build-arg TARGETARCH=${TARGETARCH} -t ${IMG} .
+	docker build --platform=${BUILDPLATFORM} --build-arg TARGETOS=${TARGETOS} --build-arg TARGETARCH=${TARGETARCH} --build-arg GITCOMMIT=${GITCOMMIT} -t ${IMG} .
 
 docker-push: ## Push docker image with the agent.
 	docker push ${IMG}

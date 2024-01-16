@@ -88,19 +88,19 @@ func (o *AgentOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.Kubeconfig, "kubeconfig", o.Kubeconfig, "Path to the kubeconfig file.")
 	fs.StringVar(&o.VPNDriver, "vpn-driver", o.VPNDriver, `The VPN driver name. (default "libreswan")`)
 	fs.StringVar(&o.RouteDriver, "route-driver", o.RouteDriver, `The Route driver name. (default "vxlan")`)
-	fs.BoolVar(&o.ForwardNodeIP, "forward-node-ip", o.ForwardNodeIP, `Forward node IP or not. (default "false")`)
-	fs.BoolVar(&o.NATTraversal, "nat-traversal", o.NATTraversal, `Enable NAT Traversal or not. (default "false")`)
 	fs.StringVar(&o.MetricsBindAddress, "metric-bind-addr", o.MetricsBindAddress, `Binding address of tunnel metrics. (default ":10265")`)
 	fs.StringVar(&o.HealthProbeAddr, "health-probe-addr", o.HealthProbeAddr, `The address the healthz/readyz endpoint binds to.. (default ":10275")`)
 
 	fs.StringVar(&o.VPNPort, "vpn-bind-port", o.VPNPort, `Binding port of vpn. (default ":4500")`)
+	fs.BoolVar(&o.NATTraversal, "nat-traversal", o.NATTraversal, `Enable NAT Traversal or not. (default "false")`)
+	fs.BoolVar(&o.ForwardNodeIP, "forward-node-ip", o.ForwardNodeIP, `Forward node IP or not. (default "false")`)
 	fs.IntVar(&o.KeepAliveInterval, "keep-alive-interval", o.KeepAliveInterval, `Interval for sending keepalive packets in the VPN tunnel, (default "0", closed)`)
 	fs.IntVar(&o.KeepAliveTimeout, "keep-alive-timeout", o.KeepAliveTimeout, `Timeout for sending keepalive packets in the VPN tunnel, (default "0", closed)`)
+
 	fs.StringVar(&o.ProxyMetricsAddress, "proxy-metric-bind-addr", o.ProxyMetricsAddress, `Binding address of proxy metrics. (default ":10266")`)
 	fs.StringVar(&o.InternalSecureAddress, "proxy-internal-secure-addr", o.InternalSecureAddress, `Binding secure address of proxy server. (default ":10263")`)
 	fs.StringVar(&o.InternalInsecureAddress, "proxy-internal-insecure-addr", o.InternalInsecureAddress, `Binding insecure address of proxy server. (default ":10264")`)
 	fs.StringVar(&o.ExternalAddress, "proxy-external-addr", o.ExternalAddress, `Binding address of proxy. (default ":10262")`)
-
 	fs.StringVar(&o.ProxyClientCertDir, "client-cert-dir", o.ProxyClientCertDir, "The directory of certificate stored at.")
 	fs.StringVar(&o.ProxyServerCertDir, "server-cert-dir", o.ProxyServerCertDir, "The directory of certificate stored at.")
 	fs.StringVar(&o.ProxyServerCertDNSNames, "server-cert-dns-names", o.ProxyServerCertDNSNames, "DNS names that will be added into server's certificate. (e.g., dns1,dns2)")

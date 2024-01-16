@@ -60,7 +60,9 @@ spec:
           - --proxy-internal-secure-addr={{.Values.proxy.internalSecureAddr}}
           - --proxy-internal-insecure-addr={{.Values.proxy.internalInsecureAddr}}
           - --proxy-external-addr={{.Values.proxy.externalAddr}}
-
+        volumeMounts:
+        - name: raven-dir
+          mountPath: /var/lib/raven
       hostNetwork: true
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -71,6 +73,11 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      volumes:
+      - name: raven-dir
+        hostPath:
+          path: /var/lib/raven
+          type: DirectoryOrCreate
   updateStrategy:
     rollingUpdate:
       maxUnavailable: {{ .Values.rollingUpdate.maxUnavailable }}
