@@ -109,13 +109,16 @@ func (p *ProxyEngine) handler(gw *v1beta1.Gateway) error {
 
 	switch JudgeType(p.proxyOption.GetServerStatus(), specServer) {
 	case StartType:
+		srcAddr := getSrcAddressForProxyServer(p.client, p.nodeName)
 		err = p.startProxyServer()
 		if err != nil {
 			klog.Errorf(utils.FormatProxyServer("failed to start proxy server, error %s", err.Error()))
 			return err
 		}
+		p.serverLocalEndpoints = srcAddr
 	case StopType:
 		p.stopProxyServer()
+		p.serverLocalEndpoints = []string{}
 	case RestartType:
 		srcAddr := getSrcAddressForProxyServer(p.client, p.nodeName)
 		if computeHash(strings.Join(p.serverLocalEndpoints, ",")) != computeHash(strings.Join(srcAddr, ",")) {
