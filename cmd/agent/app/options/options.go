@@ -133,6 +133,7 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 	}
 	_, port, err := net.SplitHostPort(o.VPNPort)
 	if err != nil {
+		klog.Warningf("failed to parse VPN port %s, fallback to default %d: %s", o.VPNPort, v1beta1.DefaultTunnelServerExposedPort, err)
 		port = strconv.Itoa(v1beta1.DefaultTunnelServerExposedPort)
 	}
 	c.Tunnel = &config.TunnelConfig{
@@ -155,9 +156,6 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 		ProxyClientCertDir:       o.ProxyClientCertDir,
 		ProxyServerCertDir:       o.ProxyServerCertDir,
 		InterceptorServerUDSFile: o.InterceptorServerUDSFile,
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to create manager: %s", err)
 	}
 	if c.Tunnel.VPNDriver == "" {
 		c.Tunnel.VPNDriver = libreswan.DriverName
@@ -183,7 +181,7 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 	c.Proxy.ExternalAddress = resolveAddress(c.Proxy.ExternalAddress, c.NodeIP, strconv.Itoa(v1beta1.DefaultProxyServerExposedPort))
 	c.Proxy.ProxyMetricsAddress = resolveAddress(c.Proxy.ProxyMetricsAddress, c.NodeIP, strconv.Itoa(DefaultProxyMetricsPort))
 
-	return c, err
+	return c, nil
 }
 
 func newMgr(cfg *restclient.Config, metricsBindAddress, healthyProbeAddress string) (manager.Manager, error) {
