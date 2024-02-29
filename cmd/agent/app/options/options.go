@@ -3,6 +3,7 @@ package options
 import (
 	"errors"
 	"fmt"
+	"github.com/openyurtio/raven/pkg/networkengine/vpndriver/wireguard"
 	"net"
 	"os"
 	"strconv"
@@ -71,16 +72,9 @@ type ProxyOptions struct {
 
 // Validate validates the AgentOptions
 func (o *AgentOptions) Validate() error {
-	if o.NodeName == "" {
-		o.NodeName = os.Getenv("NODE_NAME")
-		if o.NodeName == "" {
-			return errors.New("either --node-name or $NODE_NAME has to be set")
-		}
-	}
-	if o.NodeIP == "" {
-		o.NodeIP = os.Getenv("NODE_IP")
-		if o.NodeIP == "" {
-			return errors.New("either --node-ip or $NODE_IP has to be set")
+	if o.VPNDriver != "" {
+		if o.VPNDriver != libreswan.DriverName && o.VPNDriver != wireguard.DriverName {
+			return errors.New("currently only supports libreswan and wireguard VPN drivers")
 		}
 	}
 	return nil
@@ -114,7 +108,18 @@ func (o *AgentOptions) AddFlags(fs *pflag.FlagSet) {
 
 // Config return a raven agent config objective
 func (o *AgentOptions) Config() (*config.Config, error) {
-	var err error
+	if o.NodeName == "" {
+		o.NodeName = os.Getenv("NODE_NAME")
+		if o.NodeName == "" {
+			return nil, errors.New("either --node-name or $NODE_NAME has to be set")
+		}
+	}
+	if o.NodeIP == "" {
+		o.NodeIP = os.Getenv("NODE_IP")
+		if o.NodeIP == "" {
+			return nil, errors.New("either --node-ip or $NODE_IP has to be set")
+		}
+	}
 	cfg, err := clientcmd.BuildConfigFromFlags("", o.Kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kube client: %s", err)
