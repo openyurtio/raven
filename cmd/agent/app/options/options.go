@@ -3,7 +3,6 @@ package options
 import (
 	"errors"
 	"fmt"
-	"github.com/openyurtio/raven/pkg/networkengine/vpndriver/wireguard"
 	"net"
 	"os"
 	"strconv"
@@ -28,6 +27,7 @@ import (
 	"github.com/openyurtio/raven/pkg/networkengine/routedriver/vxlan"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver/libreswan"
+	"github.com/openyurtio/raven/pkg/networkengine/vpndriver/wireguard"
 	"github.com/openyurtio/raven/pkg/utils"
 )
 
