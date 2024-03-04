@@ -244,7 +244,12 @@ func (l *libreswan) createRelayConnections(desiredRelayConns map[string]*vpndriv
 				continue
 			}
 			if l.centralGw.NodeName == l.nodeName {
-				errList = errList.Append(l.deleteRavenSkipNAT(l.relayConnections[connName]))
+				if conn, ok := l.relayConnections[connName]; ok && conn != nil {
+					err := l.deleteRavenSkipNAT(conn)
+					if err != nil {
+						errList = errList.Append(err)
+					}
+				}
 			}
 			delete(l.relayConnections, connName)
 		}
@@ -256,7 +261,9 @@ func (l *libreswan) createRelayConnections(desiredRelayConns map[string]*vpndriv
 		errList = errList.Append(err)
 		if l.centralGw.NodeName == l.nodeName {
 			err = l.ensureRavenSkipNAT(connection)
-			errList = errList.Append(err)
+			if err != nil {
+				errList = errList.Append(err)
+			}
 		}
 	}
 
@@ -465,7 +472,12 @@ func (l *libreswan) Cleanup() error {
 			klog.ErrorS(err, "fail to delete connection", "connectionName", name)
 		}
 		if l.centralGw != nil && l.centralGw.NodeName == l.nodeName {
-			errList = errList.Append(l.deleteRavenSkipNAT(l.relayConnections[name]))
+			if conn, ok := l.relayConnections[name]; ok && conn != nil {
+				err := l.deleteRavenSkipNAT(conn)
+				if err != nil {
+					errList = errList.Append(err)
+				}
+			}
 		}
 	}
 	for name := range l.edgeConnections {
