@@ -271,9 +271,10 @@ func (vx *vxlan) ensureVxlanLink(network *types.Network, vpnDriverMTUFn func() (
 			}(vpnDriverMTU, routeDriverMTU),
 			Flags: net.FlagUp,
 		},
-		VxlanId: vxlanID,
-		Age:     300,
-		Port:    vxlanPort,
+		VxlanId:  vxlanID,
+		Age:      300,
+		Port:     vxlanPort,
+		Learning: true,
 	}
 	if !vx.isGatewayRole(network) {
 		vxlanLink.Group = net.ParseIP(network.LocalEndpoint.PrivateIP)
