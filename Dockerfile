@@ -21,9 +21,11 @@ ARG GITCOMMIT
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=on go build -ldflags "-X main.GitCommit=${GITCOMMIT}" -a -o raven-agent-ds cmd/agent/main.go
 
 
-FROM alpine:3.17
+FROM alpine:3.18
+COPY hack/iptables-wrapper-installer.sh /iptables-wrapper-installer.sh
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories \
-    && apk add openrc libreswan libreswan-openrc ipset iptables python3 bash --no-cache \
+    && apk add openrc libreswan libreswan-openrc ipset iptables python3 wireguard-tools nftables bash --no-cache \
+    && /iptables-wrapper-installer.sh --no-sanity-check \
     && sed -i 's/runscript/openrc-run/g' /etc/init.d/ipsec \
     && sed -i 's/#logfile=/logfile=/g' /etc/ipsec.conf \
     && mkdir -p /run/openrc \
