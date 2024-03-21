@@ -38,6 +38,7 @@ type TunnelConfig struct {
 	VPNDriver         string
 	VPNPort           string
 	RouteDriver       string
+	MACPrefix         string
 	ForwardNodeIP     bool
 	NATTraversal      bool
 	KeepAliveInterval int

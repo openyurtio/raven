@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/pflag"
 	v1 "k8s.io/api/core/v1"
@@ -35,6 +37,7 @@ const (
 	DefaultTunnelMetricsPort = 10265
 	DefaultProxyMetricsPort  = 10266
 	DefaultHealthyProbeAddr  = 10275
+	DefaultMACPrefix         = "aa:0f"
 )
 
 // AgentOptions has the information that required by the raven agent
@@ -52,6 +55,7 @@ type TunnelOptions struct {
 	VPNDriver         string
 	VPNPort           string
 	RouteDriver       string
+	MACPrefix         string
 	ForwardNodeIP     bool
 	NATTraversal      bool
 	KeepAliveInterval int
@@ -77,6 +81,15 @@ func (o *AgentOptions) Validate() error {
 			return errors.New("currently only supports libreswan and wireguard VPN drivers")
 		}
 	}
+	if o.MACPrefix != "" {
+		reg := regexp.MustCompile(`^[0-9a-fA-F]+$`)
+		strs := strings.Split(o.MACPrefix, ":")
+		for i := range strs {
+			if !reg.MatchString(strings.ToLower(strs[i])) {
+				return fmt.Errorf("mac prefix %s is nonstandard", o.MACPrefix)
+			}
+		}
+	}
 	return nil
 }
 
@@ -95,6 +108,7 @@ func (o *AgentOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&o.ForwardNodeIP, "forward-node-ip", o.ForwardNodeIP, `Forward node IP or not. (default "false")`)
 	fs.IntVar(&o.KeepAliveInterval, "keep-alive-interval", o.KeepAliveInterval, `Interval for sending keepalive packets in the VPN tunnel, (default "0", closed)`)
 	fs.IntVar(&o.KeepAliveTimeout, "keep-alive-timeout", o.KeepAliveTimeout, `Timeout for sending keepalive packets in the VPN tunnel, (default "0", closed)`)
+	fs.StringVar(&o.MACPrefix, "customized-mac-prefix", o.MACPrefix, `Customized MAC address prefix for vxlan link, (default "aa:0f")`)
 
 	fs.StringVar(&o.ProxyMetricsAddress, "proxy-metric-bind-addr", o.ProxyMetricsAddress, `Binding address of proxy metrics. (default ":10266")`)
 	fs.StringVar(&o.InternalSecureAddress, "proxy-internal-secure-addr", o.InternalSecureAddress, `Binding secure address of proxy server. (default ":10263")`)
@@ -145,6 +159,7 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 		VPNPort:           port,
 		VPNDriver:         o.VPNDriver,
 		RouteDriver:       o.RouteDriver,
+		MACPrefix:         o.MACPrefix,
 		ForwardNodeIP:     o.ForwardNodeIP,
 		NATTraversal:      o.NATTraversal,
 		KeepAliveInterval: o.KeepAliveInterval,
@@ -170,6 +185,9 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 	}
 	if c.Tunnel.VPNPort == "" {
 		c.Tunnel.VPNPort = vpndriver.DefaultVPNPort
+	}
+	if c.Tunnel.MACPrefix == "" {
+		c.Tunnel.MACPrefix = DefaultMACPrefix
 	}
 	if c.Proxy.ProxyClientCertDir == "" {
 		c.Proxy.ProxyClientCertDir = utils.RavenProxyClientCertDir
