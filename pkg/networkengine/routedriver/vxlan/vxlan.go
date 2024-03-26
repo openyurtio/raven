@@ -454,7 +454,11 @@ func (vx *vxlan) calIPSetOnNode(network *types.Network) map[string]*netlink.IPSe
 			continue
 		}
 		for _, srcCIDR := range nodeInfo.Subnets {
-			_, ipNet, _ := net.ParseCIDR(srcCIDR)
+			_, ipNet, err := net.ParseCIDR(srcCIDR)
+			if err != nil {
+				klog.Errorf("parse node subnet %s error %s", srcCIDR, err.Error())
+				continue
+			}
 			ones, _ := ipNet.Mask.Size()
 			entry := &netlink.IPSetEntry{
 				IP:      ipNet.IP,
