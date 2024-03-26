@@ -440,7 +440,8 @@ func TestVxlan_Apply(t *testing.T) {
 	for _, v := range testcases {
 		t.Run(v.name, func(t *testing.T) {
 			vx := vxlan{
-				nodeName: v.nodeName,
+				nodeName:  v.nodeName,
+				macPrefix: "aa:0f",
 			}
 			a := assert.New(t)
 			a.NoError(vx.Init())
