@@ -93,8 +93,12 @@ func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error
 	var desiredRules, currentRules map[string]*netlink.Rule
 
 	// The desired and current FDB entries calculated from given network.
-	// The key is netlink.Neigh.IP
+	// The key is NeighKey()
 	var desiredFDBs, currentFDBs map[string]*netlink.Neigh
+
+	// The desired and current ARP entries calculated from given network.
+	// The key is NeighKey()
+	var desiredARPs, currentARPs map[string]*netlink.Neigh
 
 	// The desired and current ipset entries calculated from given network.
 	// The key is ip set entry
@@ -129,6 +133,11 @@ func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error
 		return fmt.Errorf("error listing fdb on node: %s", err)
 	}
 
+	currentARPs, err = networkutil.ListARPsOnNode(vx.vxlanIface)
+	if err != nil {
+		return fmt.Errorf("error listing arp on node: %s", err)
+	}
+
 	currentSet, err = networkutil.ListIPSetOnNode(vx.ipset)
 	if err != nil {
 		return fmt.Errorf("error listing ip set on node: %s", err)
@@ -143,7 +152,10 @@ func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error
 		if err != nil {
 			return fmt.Errorf("error calculate gateway fdb: %s", err)
 		}
-
+		desiredARPs, err = vx.calARPOnGateway(network)
+		if err != nil {
+			return fmt.Errorf("error calculate gateway arp: %s", err)
+		}
 		err = vx.deleteChainRuleOnNode(iptablesutil.MangleTable, iptablesutil.RavenMarkChain, nonGatewayChainRuleSpec)
 		if err != nil {
 			return fmt.Errorf("error deleting non gateway chain rule: %s", err)
@@ -157,6 +169,10 @@ func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error
 		desiredFDBs, err = vx.calFDBOnNonGateway(network)
 		if err != nil {
 			return fmt.Errorf("error calculate non gateway fdb: %s", err)
+		}
+		desiredARPs, err = vx.calARPOnNonGateway(network)
+		if err != nil {
+			return fmt.Errorf("error calculate non gateway arp: %s", err)
 		}
 		err = vx.deleteChainRuleOnNode(iptablesutil.MangleTable, iptablesutil.RavenMarkChain, gatewayChainRuleSpec)
 		if err != nil {
@@ -179,6 +195,10 @@ func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error
 	err = networkutil.ApplyFDBs(currentFDBs, desiredFDBs)
 	if err != nil {
 		return fmt.Errorf("error applying fdb: %s", err)
+	}
+	err = networkutil.ApplyARPs(currentARPs, desiredARPs)
+	if err != nil {
+		return fmt.Errorf("error applying arp: %s", err)
 	}
 	err = networkutil.ApplyIPSet(vx.ipset, currentSet, desiredSet)
 	if err != nil {
@@ -406,7 +426,7 @@ func (vx *vxlan) calFDBOnGateway(network *types.Network) (map[string]*netlink.Ne
 		if err != nil {
 			return nil, fmt.Errorf("convert ip address %s to hardware address error %s", v.PrivateIP, err.Error())
 		}
-		fdbs[v.PrivateIP] = &netlink.Neigh{
+		nh := &netlink.Neigh{
 			LinkIndex:    vx.vxlanIface.Attrs().Index,
 			State:        netlink.NUD_PERMANENT | netlink.NUD_NOARP,
 			Type:         netlink.NDA_DST,
@@ -415,6 +435,7 @@ func (vx *vxlan) calFDBOnGateway(network *types.Network) (map[string]*netlink.Ne
 			IP:           net.ParseIP(v.PrivateIP),
 			HardwareAddr: HardwareAddr,
 		}
+		fdbs[networkutil.NeighKey(nh)] = nh
 	}
 	return fdbs, nil
 }
@@ -428,17 +449,61 @@ func (vx *vxlan) calFDBOnNonGateway(network *types.Network) (map[string]*netlink
 	if err != nil {
 		return nil, fmt.Errorf("convert ip address %s to hardware address error %s", network.LocalEndpoint.PrivateIP, err.Error())
 	}
-	return map[string]*netlink.Neigh{
-		network.LocalEndpoint.PrivateIP: {
+	nh := &netlink.Neigh{
+		LinkIndex:    vx.vxlanIface.Attrs().Index,
+		State:        netlink.NUD_PERMANENT | netlink.NUD_NOARP,
+		Type:         netlink.NDA_DST,
+		Family:       syscall.AF_BRIDGE,
+		Flags:        netlink.NTF_SELF,
+		IP:           net.ParseIP(network.LocalEndpoint.PrivateIP),
+		HardwareAddr: HardwareAddr,
+	}
+	return map[string]*netlink.Neigh{networkutil.NeighKey(nh): nh}, nil
+}
+
+// calARPOnGateway calculates and returns the desired ARP entries on gateway node.
+// The ARP entries format are equivalent to the following `ip neigh` command:
+func (vx *vxlan) calARPOnGateway(network *types.Network) (map[string]*netlink.Neigh, error) {
+	arps := make(map[string]*netlink.Neigh)
+	for k, v := range network.LocalNodeInfo {
+		if vx.nodeName == k {
+			continue
+		}
+		HardwareAddr, err := vx.ipAddrToHardwareAddr(net.ParseIP(v.PrivateIP))
+		if err != nil {
+			return nil, fmt.Errorf("convert ip address %s to hardware address error %s", v.PrivateIP, err.Error())
+		}
+		nh := &netlink.Neigh{
 			LinkIndex:    vx.vxlanIface.Attrs().Index,
-			State:        netlink.NUD_PERMANENT | netlink.NUD_NOARP,
+			State:        netlink.NUD_PERMANENT,
 			Type:         netlink.NDA_DST,
-			Family:       syscall.AF_BRIDGE,
+			Family:       syscall.AF_INET,
 			Flags:        netlink.NTF_SELF,
-			IP:           net.ParseIP(network.LocalEndpoint.PrivateIP),
+			IP:           vxlanIP(net.ParseIP(v.PrivateIP)),
 			HardwareAddr: HardwareAddr,
-		},
-	}, nil
+		}
+		arps[networkutil.NeighKey(nh)] = nh
+	}
+	return arps, nil
+}
+
+// calARPOnNonGateway calculates and returns the desired ARP entries on non-gateway node.
+// The ARP entries format are equivalent to the following `ip neigh` command:
+func (vx *vxlan) calARPOnNonGateway(network *types.Network) (map[string]*netlink.Neigh, error) {
+	HardwareAddr, err := vx.ipAddrToHardwareAddr(net.ParseIP(network.LocalEndpoint.PrivateIP))
+	if err != nil {
+		return nil, fmt.Errorf("convert ip address %s to hardware address error %s", network.LocalEndpoint.PrivateIP, err.Error())
+	}
+	nh := &netlink.Neigh{
+		LinkIndex:    vx.vxlanIface.Attrs().Index,
+		State:        netlink.NUD_PERMANENT,
+		Type:         netlink.NDA_DST,
+		Family:       syscall.AF_INET,
+		Flags:        netlink.NTF_SELF,
+		IP:           vxlanIP(net.ParseIP(network.LocalEndpoint.PrivateIP)),
+		HardwareAddr: HardwareAddr,
+	}
+	return map[string]*netlink.Neigh{networkutil.NeighKey(nh): nh}, nil
 }
 
 // calIPSetOnNonGateway calculates and returns the desired ip set entries on non-gateway node.
