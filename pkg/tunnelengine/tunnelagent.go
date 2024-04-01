@@ -89,18 +89,16 @@ func (c *TunnelHandler) Handler() error {
 		// try to update public IP if empty.
 		gw := &gws.Items[i]
 		if ep := getTunnelActiveEndpoints(gw); ep != nil {
-			if ep.PublicIP == "" || c.natTraversal && (ep.NATType == "" || ep.PublicPort == 0 && ep.NATType != utils.NATSymmetric) {
-				if ep.PublicIP == "" {
-					if err := c.configGatewayPublicIP(gw); err != nil {
-						klog.ErrorS(err, "error config gateway public ip", "gateway", klog.KObj(gw))
-					}
+			if ep.PublicIP == "" {
+				if err := c.configGatewayPublicIP(gw); err != nil {
+					// output only error messages, without skipping
+					klog.ErrorS(err, "error config gateway public ip", "gateway", klog.KObj(gw))
 				}
-				if c.natTraversal && (ep.NATType == "" || ep.PublicPort == 0 && ep.NATType != utils.NATSymmetric) {
-					if err := c.configGatewayStunInfo(gw); err != nil {
-						klog.ErrorS(err, "error config gateway stun info", "gateway", klog.KObj(gw))
-					}
+			}
+			if c.natTraversal && (ep.NATType == "" || ep.PublicPort == 0 && ep.NATType != utils.NATSymmetric) {
+				if err := c.configGatewayStunInfo(gw); err != nil {
+					klog.ErrorS(err, "error config gateway stun info", "gateway", klog.KObj(gw))
 				}
-				continue
 			}
 		}
 		if !c.shouldHandleGateway(gw) {
@@ -210,10 +208,6 @@ func (c *TunnelHandler) shouldHandleGateway(gateway *v1beta1.Gateway) bool {
 	ep := getTunnelActiveEndpoints(gateway)
 	if ep == nil {
 		klog.InfoS("no active endpoint , waiting for sync", "gateway", klog.KObj(gateway))
-		return false
-	}
-	if ep.PublicIP == "" {
-		klog.InfoS("no public IP for gateway, waiting for sync", "gateway", klog.KObj(gateway))
 		return false
 	}
 	if c.natTraversal {

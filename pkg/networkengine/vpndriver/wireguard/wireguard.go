@@ -275,15 +275,19 @@ func (w *wireguard) createEdgeConnections(desiredEdgeConns map[string]*vpndriver
 		} else {
 			remotePort = newConn.RemoteEndpoint.PublicPort
 		}
+		var endpoint *net.UDPAddr
+		if newConn.RemoteEndpoint.PublicIP != "" {
+			endpoint = &net.UDPAddr{
+				IP:   net.ParseIP(newConn.RemoteEndpoint.PublicIP),
+				Port: remotePort,
+			}
+		}
 		peerConfigs = append(peerConfigs, wgtypes.PeerConfig{
 			PublicKey:    *newKey,
 			Remove:       false,
 			UpdateOnly:   false,
 			PresharedKey: &w.psk,
-			Endpoint: &net.UDPAddr{
-				IP:   net.ParseIP(newConn.RemoteEndpoint.PublicIP),
-				Port: remotePort,
-			},
+			Endpoint:     endpoint,
 
 			PersistentKeepaliveInterval: &ka,
 			ReplaceAllowedIPs:           true,
