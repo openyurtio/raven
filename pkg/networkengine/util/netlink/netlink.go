@@ -42,9 +42,10 @@ var (
 
 	XfrmPolicyFlush = xfrmPolicyFlush
 
-	NeighAppend = neighAppend
-	NeighList   = neighList
-	NeighDel    = neighDel
+	NeighAdd     = neighAdd
+	NeighReplace = neighReplace
+	NeighList    = neighList
+	NeighDel     = neighDel
 
 	LinkByName  = linkByName
 	LinkByIndex = linkByIndex
@@ -158,13 +159,23 @@ func ruleDel(rule *netlink.Rule) (err error) {
 	return
 }
 
-func neighAppend(neigh *netlink.Neigh) (err error) {
-	err = netlink.NeighAppend(neigh)
+func neighAdd(neigh *netlink.Neigh) (err error) {
+	err = netlink.NeighAdd(neigh)
 	if err != nil {
-		klog.ErrorS(err, "error on netlink.NeighAppend")
+		klog.ErrorS(err, "error on netlink.NeighSet")
 		return
 	}
-	klog.V(5).InfoS("netlink.NeighAppend succeeded")
+	klog.V(5).InfoS("netlink.NeighAdd succeeded")
+	return
+}
+
+func neighReplace(neigh *netlink.Neigh) (err error) {
+	err = netlink.NeighSet(neigh)
+	if err != nil {
+		klog.ErrorS(err, "error on netlink.NeighSet")
+		return
+	}
+	klog.V(5).InfoS("netlink.NeighSet succeeded")
 	return
 }
 

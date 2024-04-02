@@ -97,16 +97,22 @@ func (p *ProxyEngine) processNextWorkItem() bool {
 }
 
 func (p *ProxyEngine) handler(gw *v1beta1.Gateway) error {
-	proxyStatus := enableProxy(gw)
-	p.option.SetProxyStatus(proxyStatus)
-	specServer, specClient := p.getRole(proxyStatus)
 	var err error
 	p.gateway, err = utils.GetOwnGateway(p.client, p.nodeName)
 	if err != nil {
 		klog.Errorf(utils.FormatProxyServer("failed get gateway for %s, can not start proxy server", p.nodeName))
 		return err
 	}
-
+	proxyStatus := p.option.GetProxyStatus()
+	if p.gateway != nil && gw.GetName() == p.gateway.GetName() {
+		proxyStatus = enableProxy(gw)
+	} else {
+		if gw.Spec.ExposeType != "" {
+			proxyStatus = enableProxy(gw)
+		}
+	}
+	p.option.SetProxyStatus(proxyStatus)
+	specServer, specClient := p.getRole(proxyStatus)
 	switch JudgeType(p.proxyOption.GetServerStatus(), specServer) {
 	case StartType:
 		srcAddr := getSrcAddressForProxyServer(p.client, p.nodeName)

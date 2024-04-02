@@ -37,6 +37,7 @@ const (
 	DefaultTunnelMetricsPort = 10265
 	DefaultProxyMetricsPort  = 10266
 	DefaultHealthyProbeAddr  = 10275
+	DefaultLocalHost         = "127.0.0.1"
 	DefaultMACPrefix         = "aa:0f"
 )
 
@@ -144,7 +145,7 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 		NodeIP:   o.NodeIP,
 	}
 	c.KubeConfig = cfg
-	c.MetricsBindAddress = resolveAddress(c.MetricsBindAddress, c.NodeIP, strconv.Itoa(DefaultTunnelMetricsPort))
+	c.MetricsBindAddress = resolveAddress(c.MetricsBindAddress, resolveLocalHost(), strconv.Itoa(DefaultTunnelMetricsPort))
 	c.HealthProbeAddr = resolveAddress(c.HealthProbeAddr, c.NodeIP, strconv.Itoa(DefaultHealthyProbeAddr))
 	c.Manager, err = newMgr(cfg, c.MetricsBindAddress, c.HealthProbeAddr)
 	if err != nil {
@@ -202,7 +203,7 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 	c.Proxy.InternalInsecureAddress = resolveAddress(c.Proxy.InternalInsecureAddress, c.NodeIP, strconv.Itoa(v1beta1.DefaultProxyServerInsecurePort))
 	c.Proxy.InternalSecureAddress = resolveAddress(c.Proxy.InternalSecureAddress, c.NodeIP, strconv.Itoa(v1beta1.DefaultProxyServerSecurePort))
 	c.Proxy.ExternalAddress = resolveAddress(c.Proxy.ExternalAddress, c.NodeIP, strconv.Itoa(v1beta1.DefaultProxyServerExposedPort))
-	c.Proxy.ProxyMetricsAddress = resolveAddress(c.Proxy.ProxyMetricsAddress, c.NodeIP, strconv.Itoa(DefaultProxyMetricsPort))
+	c.Proxy.ProxyMetricsAddress = resolveAddress(c.Proxy.ProxyMetricsAddress, resolveLocalHost(), strconv.Itoa(DefaultProxyMetricsPort))
 
 	return c, nil
 }
@@ -308,6 +309,15 @@ func getGatewayAPIGroupResource() *restmapper.APIGroupResources {
 			},
 		},
 	}
+}
+
+func resolveLocalHost() string {
+	ipv4Addr, err := net.ResolveIPAddr("ip4", "localhost")
+	if err != nil {
+		klog.Warningf("can not get localhost addr, error %s, using default address %s", err.Error(), DefaultLocalHost)
+		return DefaultLocalHost
+	}
+	return ipv4Addr.String()
 }
 
 func resolveAddress(srcAddr, defaultHost, defaultPort string) string {

@@ -49,6 +49,8 @@ func RouteKey(route *netlink.Route) string {
 	return route.String()
 }
 
+func NeighKey(neigh *netlink.Neigh) string { return neigh.String() }
+
 func RuleKey(rule *netlink.Rule) string {
 	return rule.String()
 }
@@ -102,22 +104,22 @@ func ApplyRules(current, desired map[string]*netlink.Rule) (err error) {
 		klog.InfoS("applying rules", "current", current, "desired", desired)
 	}
 	errList := errorlist.List{}
-	for k, v := range desired {
-		_, ok := current[k]
+	// deleted unwanted ip rules
+	for k, v := range current {
+		_, ok := desired[k]
 		if !ok {
-			klog.InfoS("adding rule", "src", v.Src, "lookup", v.Table)
-			err = netlinkutil.RuleAdd(v)
+			klog.InfoS("deleting rule", "src", v.Src, "lookup", v.Table)
+			err = netlinkutil.RuleDel(v)
 			errList = errList.Append(err)
-			continue
 		}
-		delete(current, k)
 	}
-	// remove unwanted rules
-	for _, v := range current {
-		klog.InfoS("deleting rule", "src", v.Src, "lookup", v.Table)
-		err = netlinkutil.RuleDel(v)
+	// add expect ip rules
+	for _, v := range desired {
+		klog.InfoS("adding rule", "src", v.Src, "lookup", v.Table)
+		err = netlinkutil.RuleAdd(v)
 		errList = errList.Append(err)
 	}
+
 	return errList.AsError()
 }
 
@@ -126,25 +128,27 @@ func ApplyRoutes(current, desired map[string]*netlink.Route) (err error) {
 		klog.InfoS("applying routes", "current", current, "desired", desired)
 	}
 	errList := errorlist.List{}
-	for k, v := range desired {
-		ro, ok := current[k]
+	for k, v := range current {
+		ro, ok := desired[k]
 		if !ok {
-			klog.InfoS("adding route", "dst", v.Dst, "via", v.Gw, "src", v.Src, "table", v.Table)
-			err = netlinkutil.RouteAdd(v)
+			// remove unwanted routes
+			klog.InfoS("deleting route", "dst", v.Dst.String(), "via", v.Gw.String())
+			err = netlinkutil.RouteDel(v)
 			errList = errList.Append(err)
-			continue
-		}
-		delete(current, k)
-		if !ro.Equal(*v) {
-			klog.InfoS("replacing route", "dst", v.Dst, "via", v.Gw, "src", v.Src, "table", v.Table)
-			err = netlinkutil.RouteReplace(v)
-			errList = errList.Append(err)
+		} else {
+			// replace unequal routes
+			if !ro.Equal(*v) {
+				klog.InfoS("replacing route", "dst", v.Dst, "via", v.Gw, "src", v.Src, "table", v.Table)
+				err = netlinkutil.RouteReplace(v)
+				errList = errList.Append(err)
+			}
+			delete(desired, k)
 		}
 	}
-	// remove unwanted routes
-	for _, v := range current {
-		klog.InfoS("deleting route", "dst", v.Dst.String(), "via", v.Gw.String())
-		err = netlinkutil.RouteDel(v)
+	// add new routes
+	for _, v := range desired {
+		klog.InfoS("adding route", "dst", v.Dst, "via", v.Gw, "src", v.Src, "table", v.Table)
+		err = netlinkutil.RouteAdd(v)
 		errList = errList.Append(err)
 	}
 	return errList.AsError()
@@ -155,20 +159,19 @@ func ApplyIPSet(set ipsetutil.IPSetInterface, current, desired map[string]*netli
 		klog.InfoS("applying ipset entry", "current", current, "desired", desired)
 	}
 	errList := errorlist.List{}
-	for k, v := range desired {
-		_, ok := current[k]
-		if !ok {
-			klog.InfoS("adding entry", "entry", k)
-			err = set.Add(v)
-			errList = errList.Append(err)
-			continue
-		}
-		delete(current, k)
-	}
-	// remove unwanted entries
+	// delete unwanted ipset entries
 	for k, v := range current {
-		klog.InfoS("deleting ipset entry", "entry", k)
-		err = set.Del(v)
+		_, ok := desired[k]
+		if !ok {
+			klog.InfoS("deleting ipset entry", "entry", k)
+			err = set.Del(v)
+			errList = errList.Append(err)
+		}
+	}
+	// add wanted ipset entries
+	for k, v := range desired {
+		klog.InfoS("adding entry", "entry", k)
+		err = set.Add(v)
 		errList = errList.Append(err)
 	}
 	return errList.AsError()
@@ -181,11 +184,21 @@ func ListFDBsOnNode(link netlink.Link) (map[string]*netlink.Neigh, error) {
 		return nil, err
 	}
 	for k, v := range neighs {
-		if v.HardwareAddr.String() == AllZeroMAC.String() {
-			fdbsOnNode[v.IP.String()] = &neighs[k]
-		}
+		fdbsOnNode[v.String()] = &neighs[k]
 	}
 	return fdbsOnNode, nil
+}
+
+func ListARPsOnNode(link netlink.Link) (map[string]*netlink.Neigh, error) {
+	arpsOnNode := make(map[string]*netlink.Neigh)
+	neighs, err := netlinkutil.NeighList(link.Attrs().Index, syscall.AF_INET)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range neighs {
+		arpsOnNode[v.String()] = &neighs[k]
+	}
+	return arpsOnNode, nil
 }
 
 func ApplyFDBs(current, desired map[string]*netlink.Neigh) (err error) {
@@ -193,22 +206,54 @@ func ApplyFDBs(current, desired map[string]*netlink.Neigh) (err error) {
 		klog.InfoS("applying FDBs", "current", current, "desired", desired)
 	}
 	errList := errorlist.List{}
-	for k, v := range desired {
-		_, ok := current[k]
+	for k, v := range current {
+		ipNeigh, ok := desired[k]
 		if !ok {
-			klog.InfoS("adding FDB", "dst", v.IP, "mac", v.HardwareAddr)
-			err = netlinkutil.NeighAppend(v)
+			klog.InfoS("deleting FDB", "dst", v.IP, "mac", v.HardwareAddr)
+			err = netlinkutil.NeighDel(v)
 			errList = errList.Append(err)
-			continue
+		} else {
+			klog.InfoS("replace FDB", "dst", v.IP, "mac", v.HardwareAddr)
+			err = netlinkutil.NeighReplace(ipNeigh)
+			errList = errList.Append(err)
 		}
-		delete(current, k)
+		delete(desired, k)
 	}
-	// remove unwanted fdb entries
-	for _, v := range current {
-		klog.InfoS("deleting FDB", "dst", v.IP, "mac", v.HardwareAddr)
-		err = netlinkutil.NeighDel(v)
+
+	for _, v := range desired {
+		klog.InfoS("adding FDB", "dst", v.IP, "mac", v.HardwareAddr)
+		err = netlinkutil.NeighAdd(v)
 		errList = errList.Append(err)
 	}
+
+	return errList.AsError()
+}
+
+func ApplyARPs(current, desired map[string]*netlink.Neigh) (err error) {
+	if klog.V(5).Enabled() {
+		klog.InfoS("applying ARPs", "current", current, "desired", desired)
+	}
+	errList := errorlist.List{}
+	for k, v := range current {
+		ipNeigh, ok := desired[k]
+		if !ok {
+			klog.InfoS("deleting ARP", "dst", v.IP, "mac", v.HardwareAddr)
+			err = netlinkutil.NeighDel(v)
+			errList = errList.Append(err)
+		} else {
+			klog.InfoS("replace ARP", "dst", v.IP, "mac", v.HardwareAddr)
+			err = netlinkutil.NeighReplace(ipNeigh)
+			errList = errList.Append(err)
+		}
+		delete(desired, k)
+	}
+
+	for _, v := range desired {
+		klog.InfoS("adding ARP", "dst", v.IP, "mac", v.HardwareAddr)
+		err = netlinkutil.NeighAdd(v)
+		errList = errList.Append(err)
+	}
+
 	return errList.AsError()
 }
 
