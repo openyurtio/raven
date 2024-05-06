@@ -3,6 +3,10 @@ package engine
 import (
 	"context"
 	"sync"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/openyurtio/api/raven/v1beta1"
 )
 
 type Option struct {
@@ -130,4 +134,30 @@ func (r *proxyContexts) GetServerCancelFunc() context.CancelFunc {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.serverCancel
+}
+
+func findCentreGateway(client client.Client) *v1beta1.Gateway {
+	var gwList v1beta1.GatewayList
+	err := client.List(context.TODO(), &gwList)
+	if err != nil {
+		return nil
+	}
+	for _, gw := range gwList.Items {
+		if gw.Spec.ExposeType != "" {
+			return gw.DeepCopy()
+		}
+	}
+	return nil
+}
+
+func getActiveEndpoints(gw *v1beta1.Gateway, aepType string) *v1beta1.Endpoint {
+	if gw == nil || gw.Status.ActiveEndpoints == nil {
+		return nil
+	}
+	for _, aep := range gw.Status.ActiveEndpoints {
+		if aep.Type == aepType {
+			return aep.DeepCopy()
+		}
+	}
+	return nil
 }
