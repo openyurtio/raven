@@ -17,45 +17,25 @@ limitations under the License.
 package utils
 
 import (
-	"context"
 	"fmt"
-
-	"github.com/openyurtio/api/raven/v1beta1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func FormatProxyServer(format string, args ...interface{}) string {
 	s := fmt.Sprintf(format, args...)
-	return fmt.Sprintf("ProxyServer: %s", s)
+	return fmt.Sprintf("[Proxy Server]: %s", s)
 }
 
 func FormatProxyClient(format string, args ...interface{}) string {
 	s := fmt.Sprintf(format, args...)
-	return fmt.Sprintf("ProxyClient: %s", s)
+	return fmt.Sprintf("[Proxy Client]: %s", s)
 }
 
 func FormatTunnel(format string, args ...interface{}) string {
 	s := fmt.Sprintf(format, args...)
-	return fmt.Sprintf("Tunnel: %s", s)
+	return fmt.Sprintf("[Tunnel Agent]: %s", s)
 }
 
 func FormatRavenEngine(format string, args ...interface{}) string {
 	s := fmt.Sprintf(format, args...)
-	return fmt.Sprintf("RavenEngine: %s", s)
-}
-
-func GetOwnGateway(client client.Client, nodeName string) (*v1beta1.Gateway, error) {
-	var gwList v1beta1.GatewayList
-	err := client.List(context.TODO(), &gwList)
-	if err != nil {
-		return nil, err
-	}
-	for _, gw := range gwList.Items {
-		for _, node := range gw.Status.Nodes {
-			if node.NodeName == nodeName {
-				return gw.DeepCopy(), nil
-			}
-		}
-	}
-	return nil, nil
+	return fmt.Sprintf("[Raven Engine]: %s", s)
 }

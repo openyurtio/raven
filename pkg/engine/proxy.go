@@ -2,8 +2,6 @@ package engine
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net"
 	"sort"
@@ -11,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -32,7 +29,7 @@ const (
 	SkipType    ActionType = "Skip"
 )
 
-func JudgeType(curr, spec bool) ActionType {
+func JudgeAction(curr, spec bool) ActionType {
 	if curr && spec {
 		return RestartType
 	}
@@ -50,70 +47,34 @@ type ProxyEngine struct {
 	nodeIP                string
 	serverLocalEndpoints  []string
 	clientRemoteEndpoints []string
-	gateway               *v1beta1.Gateway
+	localGateway          *v1beta1.Gateway
 	config                *config.Config
 	client                client.Client
-
-	ctx         context.Context
-	option      *Option
-	proxyCtx    ProxyContext
-	proxyOption *proxyOption
-	queue       workqueue.RateLimitingInterface
+	ctx                   context.Context
+	option                *Option
+	proxyCtx              ProxyContext
+	proxyOption           *proxyOption
 }
 
-func newProxyEngine(ctx context.Context, cfg *config.Config, client client.Client, opt *Option, queue workqueue.RateLimitingInterface) *ProxyEngine {
-	return &ProxyEngine{
-		nodeName:    cfg.NodeName,
-		nodeIP:      cfg.NodeIP,
-		config:      cfg,
-		client:      client,
-		option:      opt,
-		ctx:         ctx,
-		proxyCtx:    newProxyContext(ctx),
-		proxyOption: newProxyOption(),
-		queue:       queue,
+func (p *ProxyEngine) Status() bool {
+	aep := getActiveEndpoints(p.localGateway, v1beta1.Proxy)
+	if aep == nil {
+		aep = getActiveEndpoints(findCentreGateway(p.client), v1beta1.Proxy)
 	}
-}
-
-func (p *ProxyEngine) worker() {
-	for p.processNextWorkItem() {
-	}
-}
-
-func (p *ProxyEngine) processNextWorkItem() bool {
-	obj, quit := p.queue.Get()
-	if quit {
-		return false
-	}
-	gw, ok := obj.(*v1beta1.Gateway)
-	if !ok {
-		return false
-	}
-	defer p.queue.Done(gw)
-
-	err := p.handler(gw)
-	p.handleEventErr(err, gw)
-	return true
-}
-
-func (p *ProxyEngine) handler(gw *v1beta1.Gateway) error {
-	var err error
-	p.gateway, err = utils.GetOwnGateway(p.client, p.nodeName)
-	if err != nil {
-		klog.Errorf(utils.FormatProxyServer("failed get gateway for %s, can not start proxy server", p.nodeName))
-		return err
-	}
-	proxyStatus := p.option.GetProxyStatus()
-	if p.gateway != nil && gw.GetName() == p.gateway.GetName() {
-		proxyStatus = enableProxy(gw)
-	} else {
-		if gw.Spec.ExposeType != "" {
-			proxyStatus = enableProxy(gw)
+	if aep != nil && aep.Config != nil {
+		enable, err := strconv.ParseBool(aep.Config[utils.RavenEnableProxy])
+		if err == nil {
+			return enable
 		}
 	}
-	p.option.SetProxyStatus(proxyStatus)
-	specServer, specClient := p.getRole(proxyStatus)
-	switch JudgeType(p.proxyOption.GetServerStatus(), specServer) {
+	return false
+}
+
+func (p *ProxyEngine) Handler() error {
+	var err error
+	p.option.SetProxyStatus(p.Status())
+	specServer, specClient := p.getRole(p.option.GetProxyStatus())
+	switch JudgeAction(p.proxyOption.GetServerStatus(), specServer) {
 	case StartType:
 		srcAddr := getSrcAddressForProxyServer(p.client, p.nodeName)
 		err = p.startProxyServer()
@@ -127,9 +88,9 @@ func (p *ProxyEngine) handler(gw *v1beta1.Gateway) error {
 		p.serverLocalEndpoints = []string{}
 	case RestartType:
 		srcAddr := getSrcAddressForProxyServer(p.client, p.nodeName)
-		if computeHash(strings.Join(p.serverLocalEndpoints, ",")) != computeHash(strings.Join(srcAddr, ",")) {
+		if strings.Join(p.serverLocalEndpoints, ",") != strings.Join(srcAddr, ",") {
 			p.stopProxyServer()
-			time.Sleep(time.Second)
+			time.Sleep(2 * time.Second)
 			err = p.startProxyServer()
 			if err != nil {
 				klog.Errorf(utils.FormatProxyServer("failed to start proxy server, error %s", err.Error()))
@@ -141,7 +102,7 @@ func (p *ProxyEngine) handler(gw *v1beta1.Gateway) error {
 
 	}
 
-	switch JudgeType(p.proxyOption.GetClientStatus(), specClient) {
+	switch JudgeAction(p.proxyOption.GetClientStatus(), specClient) {
 	case StartType:
 		err = p.startProxyClient()
 		if err != nil {
@@ -151,14 +112,14 @@ func (p *ProxyEngine) handler(gw *v1beta1.Gateway) error {
 	case StopType:
 		p.stopProxyClient()
 	case RestartType:
-		dstAddr := getDestAddressForProxyClient(p.client, p.gateway)
+		dstAddr := getDestAddressForProxyClient(p.client, p.localGateway)
 		if len(dstAddr) < 1 {
 			klog.Infoln(utils.FormatProxyClient("dest address is empty, will not connected it"))
 			return nil
 		}
-		if computeHash(strings.Join(p.clientRemoteEndpoints, ",")) != computeHash(strings.Join(dstAddr, ",")) {
+		if strings.Join(p.clientRemoteEndpoints, ",") != strings.Join(dstAddr, ",") {
 			p.stopProxyClient()
-			time.Sleep(time.Second)
+			time.Sleep(2 * time.Second)
 			err = p.startProxyClient()
 			if err != nil {
 				klog.Errorf(utils.FormatProxyServer("failed to start proxy client, error %s", err.Error()))
@@ -173,13 +134,13 @@ func (p *ProxyEngine) handler(gw *v1beta1.Gateway) error {
 
 func (p *ProxyEngine) startProxyServer() error {
 	klog.Infoln(utils.FormatProxyServer("start raven l7 proxy server"))
-	if p.gateway == nil {
+	if p.localGateway == nil {
 		return fmt.Errorf("unknown gateway for node %s, can not start proxy server", p.nodeName)
 	}
 	pe := &proxyengine.EnginConfig{
 		Name:                    p.nodeName,
 		IP:                      p.nodeIP,
-		GatewayName:             p.gateway.Name,
+		GatewayName:             p.localGateway.Name,
 		CertDir:                 p.config.Proxy.ProxyServerCertDir,
 		MetaAddress:             p.config.Proxy.ProxyMetricsAddress,
 		CertIPs:                 p.config.Proxy.ProxyServerCertIPs,
@@ -190,7 +151,7 @@ func (p *ProxyEngine) startProxyServer() error {
 		ExposedAddress:          p.config.Proxy.ExternalAddress,
 	}
 	ctx := p.proxyCtx.GetServerContext()
-	ps, err := proxyserver.NewProxyServer(pe, p.client, p.config.Manager.GetConfig(), p.gateway.DeepCopy())
+	ps, err := proxyserver.NewProxyServer(pe, p.client, p.config.Manager.GetConfig(), p.localGateway.DeepCopy())
 	if err != nil {
 		return fmt.Errorf("failed to new proxy server, error %s", err.Error())
 	}
@@ -213,7 +174,7 @@ func (p *ProxyEngine) stopProxyServer() {
 func (p *ProxyEngine) startProxyClient() error {
 	klog.Infoln(utils.FormatProxyClient("start raven l7 proxy client"))
 	var err error
-	dstAddr := getDestAddressForProxyClient(p.client, p.gateway)
+	dstAddr := getDestAddressForProxyClient(p.client, p.localGateway)
 	if len(dstAddr) < 1 {
 		klog.Infoln(utils.FormatProxyClient("dest address is empty, will not connected it"))
 		return nil
@@ -266,7 +227,7 @@ func getSrcAddressForProxyServer(client client.Client, nodeName string) []string
 	return srcAddr
 }
 
-func getDestAddressForProxyClient(client client.Client, ownGateway *v1beta1.Gateway) []string {
+func getDestAddressForProxyClient(client client.Client, localGateway *v1beta1.Gateway) []string {
 	destAddr := make([]string, 0)
 	var gwList v1beta1.GatewayList
 	err := client.List(context.TODO(), &gwList)
@@ -277,7 +238,7 @@ func getDestAddressForProxyClient(client client.Client, ownGateway *v1beta1.Gate
 		if gw.Spec.ExposeType == "" {
 			continue
 		}
-		if ownGateway != nil && ownGateway.Name == gw.Name {
+		if localGateway != nil && localGateway.Name == gw.Name {
 			continue
 		}
 		for _, aep := range gw.Status.ActiveEndpoints {
@@ -296,17 +257,11 @@ func (p *ProxyEngine) getRole(enableProxy bool) (enableServer, enableClient bool
 	if !enableProxy {
 		return
 	}
-	var gwList v1beta1.GatewayList
-	err := p.client.List(p.ctx, &gwList)
-	if err != nil {
-		return
-	}
-
-	for _, gw := range gwList.Items {
-		for _, aep := range gw.Status.ActiveEndpoints {
+	if p.localGateway != nil {
+		for _, aep := range p.localGateway.Status.ActiveEndpoints {
 			if aep.NodeName == p.nodeName && aep.Type == v1beta1.Proxy {
 				enableClient = true
-				if gw.Spec.ExposeType != "" {
+				if p.localGateway.Spec.ExposeType != "" {
 					enableServer = true
 				} else {
 					enableServer = false
@@ -314,7 +269,7 @@ func (p *ProxyEngine) getRole(enableProxy bool) (enableServer, enableClient bool
 				return
 			}
 		}
-		for _, node := range gw.Status.Nodes {
+		for _, node := range p.localGateway.Status.Nodes {
 			if node.NodeName == p.nodeName {
 				enableServer = false
 				enableClient = false
@@ -327,7 +282,7 @@ func (p *ProxyEngine) getRole(enableProxy bool) (enableServer, enableClient bool
 	return
 }
 
-func (p *ProxyEngine) stopServers() {
+func (p *ProxyEngine) stop() {
 	if p.proxyOption.GetServerStatus() {
 		cancelServer := p.proxyCtx.GetServerCancelFunc()
 		cancelServer()
@@ -336,44 +291,4 @@ func (p *ProxyEngine) stopServers() {
 		cancelClient := p.proxyCtx.GetClientCancelFunc()
 		cancelClient()
 	}
-}
-
-func enableProxy(gw *v1beta1.Gateway) (enable bool) {
-	enable = false
-	for _, aep := range gw.Status.ActiveEndpoints {
-		if aep.Type == v1beta1.Proxy {
-			if aep.Config == nil {
-				enable = false
-				return
-			}
-			start, ok := aep.Config[utils.RavenEnableProxy]
-			if !ok {
-				enable = false
-				return
-			}
-			if strings.ToLower(start) == "true" {
-				enable = true
-			}
-		}
-	}
-	return
-}
-
-func (p *ProxyEngine) handleEventErr(err error, event interface{}) {
-	if err == nil {
-		p.queue.Forget(event)
-		return
-	}
-	if p.queue.NumRequeues(event) < utils.MaxRetries {
-		klog.Infof("error syncing event %v: %v", event, err)
-		p.queue.AddRateLimited(event)
-		return
-	}
-	klog.Infof("dropping event %q out of the queue: %v", event, err)
-	p.queue.Forget(event)
-}
-
-func computeHash(target string) string {
-	hash := sha256.Sum224([]byte(target))
-	return strings.ToLower(hex.EncodeToString(hash[:]))
 }

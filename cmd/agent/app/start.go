@@ -58,15 +58,17 @@ func NewRavenAgentCommand(ctx context.Context) *cobra.Command {
 
 // Run starts the raven-agent
 func Run(ctx context.Context, cfg *config.CompletedConfig) error {
-	klog.Info("Start raven agent")
-	defer klog.Info("Stop raven agent")
 	if err := disableICMPRedirect(); err != nil {
 		return err
 	}
 	if err := disableICMPRpFilter(); err != nil {
 		return err
 	}
-	engine := ravenengine.NewEngine(ctx, cfg.Config)
+	engine, err := ravenengine.NewEngine(ctx, cfg.Config)
+	if err != nil {
+		return err
+	}
+	klog.Info("engine successfully start")
 	engine.Start()
 	return nil
 }
