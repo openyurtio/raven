@@ -33,14 +33,26 @@ type IPSetInterface interface {
 	Del(entry *netlink.IPSetEntry) error
 	Flush() error
 	Destroy() error
+	Key(entry *netlink.IPSetEntry) string
 }
+
+var DefaultKeyFunc = EntryKey
 
 type ipSetWrapper struct {
 	setName string
+	setType string
+	keyFunc func(setEntry *netlink.IPSetEntry) string
 }
 
-func New(setName string) (IPSetInterface, error) {
-	err := netlink.IpsetCreate(setName, "hash:net", netlink.IpsetCreateOptions{
+type IpsetWrapperOption struct {
+	KeyFunc func(setEntry *netlink.IPSetEntry) string
+}
+
+func New(setName, setTypeName string, options IpsetWrapperOption) (IPSetInterface, error) {
+	if options.KeyFunc == nil {
+		options.KeyFunc = DefaultKeyFunc
+	}
+	err := netlink.IpsetCreate(setName, setTypeName, netlink.IpsetCreateOptions{
 		Replace: true,
 	})
 	if err != nil {
@@ -50,7 +62,7 @@ func New(setName string) (IPSetInterface, error) {
 	if klog.V(5).Enabled() {
 		klog.V(5).InfoS("netlink.IpsetCreate succeeded", "setName", setName)
 	}
-	return &ipSetWrapper{setName}, nil
+	return &ipSetWrapper{setName, setTypeName, options.KeyFunc}, nil
 }
 
 func (i *ipSetWrapper) List() (*netlink.IPSetResult, error) {
@@ -72,11 +84,11 @@ func (i *ipSetWrapper) Name() string {
 func (i *ipSetWrapper) Add(entry *netlink.IPSetEntry) (err error) {
 	err = netlink.IpsetAdd(i.Name(), entry)
 	if err != nil {
-		klog.ErrorS(err, "error on netlink.IpsetAdd", "setName", i.Name(), "entry", SetEntryKey(entry))
+		klog.ErrorS(err, "error on netlink.IpsetAdd", "setName", i.Name(), "entry", i.Key(entry))
 		return
 	}
 	if klog.V(5).Enabled() {
-		klog.V(5).InfoS("netlink.IpsetAdd succeeded", "setName", i.Name(), "entry", SetEntryKey(entry))
+		klog.V(5).InfoS("netlink.IpsetAdd succeeded", "setName", i.Name(), "entry", i.Key(entry))
 	}
 	return
 }
@@ -84,11 +96,11 @@ func (i *ipSetWrapper) Add(entry *netlink.IPSetEntry) (err error) {
 func (i *ipSetWrapper) Del(entry *netlink.IPSetEntry) (err error) {
 	err = netlink.IpsetDel(i.Name(), entry)
 	if err != nil {
-		klog.ErrorS(err, "error on netlink.IpsetDel", "setName", i.Name(), "entry", SetEntryKey(entry))
+		klog.ErrorS(err, "error on netlink.IpsetDel", "setName", i.Name(), "entry", i.Key)
 		return
 	}
 	if klog.V(5).Enabled() {
-		klog.V(5).InfoS("netlink.IpsetDel succeeded", "setName", i.Name(), "entry", SetEntryKey(entry))
+		klog.V(5).InfoS("netlink.IpsetDel succeeded", "setName", i.Name(), "entry", i.Key(entry))
 	}
 	return
 }
@@ -117,6 +129,10 @@ func (i *ipSetWrapper) Destroy() (err error) {
 	return
 }
 
-func SetEntryKey(setEntry *netlink.IPSetEntry) string {
+func (i *ipSetWrapper) Key(entry *netlink.IPSetEntry) string {
+	return i.keyFunc(entry)
+}
+
+func EntryKey(setEntry *netlink.IPSetEntry) string {
 	return fmt.Sprintf("%s/%d", setEntry.IP.String(), setEntry.CIDR)
 }

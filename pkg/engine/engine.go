@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/workqueue"
@@ -22,13 +23,16 @@ import (
 )
 
 type Engine struct {
-	nodeName string
-	nodeIP   string
-	context  context.Context
-	manager  manager.Manager
-	client   client.Client
-	option   *Option
-	queue    workqueue.RateLimitingInterface
+	nodeName   string
+	nodeIP     string
+	syncRules  bool
+	syncPeriod metav1.Duration
+
+	context context.Context
+	manager manager.Manager
+	client  client.Client
+	option  *Option
+	queue   workqueue.RateLimitingInterface
 
 	tunnel *TunnelEngine
 	proxy  *ProxyEngine
@@ -36,12 +40,14 @@ type Engine struct {
 
 func NewEngine(ctx context.Context, cfg *config.Config) (*Engine, error) {
 	engine := &Engine{
-		nodeName: cfg.NodeName,
-		nodeIP:   cfg.NodeIP,
-		manager:  cfg.Manager,
-		context:  ctx,
-		option:   NewEngineOption(),
-		queue:    workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "raven"),
+		nodeName:   cfg.NodeName,
+		nodeIP:     cfg.NodeIP,
+		syncRules:  cfg.SyncRules,
+		syncPeriod: cfg.SyncPeriod,
+		manager:    cfg.Manager,
+		context:    ctx,
+		option:     NewEngineOption(),
+		queue:      workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "raven"),
 	}
 	err := ctrl.NewControllerManagedBy(engine.manager).
 		For(&v1beta1.Gateway{}, builder.WithPredicates(predicate.Funcs{
@@ -53,7 +59,7 @@ func NewEngine(ctx context.Context, cfg *config.Config) (*Engine, error) {
 			return reconcile.Result{}, nil
 		}))
 	if err != nil {
-		klog.Errorf(utils.FormatRavenEngine("fail to new controller with manager, error %s", err.Error()))
+		klog.Errorf("fail to new controller with manager, error %s", err.Error())
 		return engine, err
 	}
 	engine.client = engine.manager.GetClient()
@@ -66,7 +72,7 @@ func NewEngine(ctx context.Context, cfg *config.Config) (*Engine, error) {
 	}
 	err = engine.tunnel.InitDriver()
 	if err != nil {
-		klog.Errorf(utils.FormatRavenEngine("fail to init tunnel driver, error %s", err.Error()))
+		klog.Errorf("fail to init tunnel driver, error %s", err.Error())
 		return engine, err
 	}
 
@@ -90,9 +96,12 @@ func (e *Engine) Start() {
 			klog.ErrorS(err, "failed to start engine controller")
 		}
 	}()
+
 	go wait.Until(e.worker, time.Second, e.context.Done())
-	<-e.context.Done()
-	e.cleanup()
+
+	if e.syncRules {
+		go wait.Until(e.regularSync, e.syncPeriod.Duration, e.context.Done())
+	}
 }
 
 func (e *Engine) worker() {
@@ -110,19 +119,29 @@ func (e *Engine) processNextWorkItem() bool {
 		return false
 	}
 	defer e.queue.Done(gw)
-	e.findLocalGateway()
-	err := e.tunnel.Handler()
+	err := e.sync()
 	if err != nil {
 		e.handleEventErr(err, gw)
+	}
+	return true
+}
+
+func (e *Engine) sync() error {
+	e.findLocalGateway()
+	err := e.proxy.Handler()
+	if err != nil {
+		return err
+	}
+	err = e.tunnel.Handler()
+	if err != nil {
+		return err
 	}
 	e.option.SetTunnelStatus(e.tunnel.Status())
+	return nil
+}
 
-	err = e.proxy.Handler()
-	if err != nil {
-		e.handleEventErr(err, gw)
-	}
-
-	return true
+func (e *Engine) regularSync() {
+	e.queue.Add(&v1beta1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "gw-sync"}})
 }
 
 func (e *Engine) findLocalGateway() {
@@ -144,12 +163,9 @@ func (e *Engine) findLocalGateway() {
 	}
 }
 
-func (e *Engine) cleanup() {
+func (e *Engine) Cleanup() {
 	if e.option.GetTunnelStatus() {
-		err := e.tunnel.CleanupDriver()
-		if err != nil {
-			klog.Errorf(utils.FormatRavenEngine("failed to cleanup tunnel driver, error %s", err.Error()))
-		}
+		e.tunnel.CleanupDriver()
 	}
 	if e.option.GetProxyStatus() {
 		e.proxy.stop()
@@ -163,18 +179,18 @@ func (e *Engine) handleEventErr(err error, gw *v1beta1.Gateway) {
 	}
 
 	if e.queue.NumRequeues(gw) < utils.MaxRetries {
-		klog.Info(utils.FormatRavenEngine("error syncing event %s: %s", gw.GetName(), err.Error()))
+		klog.Infof("error syncing event %s: %s", gw.GetName(), err.Error())
 		e.queue.AddRateLimited(gw)
 		return
 	}
-	klog.Info(utils.FormatRavenEngine("dropping event %s out of the queue: %s", gw.GetName(), err.Error()))
+	klog.Infof("dropping event %s out of the queue: %s", gw.GetName(), err.Error())
 	e.queue.Forget(gw)
 }
 
 func (e *Engine) addGateway(evt event.CreateEvent) bool {
 	gw, ok := evt.Object.(*v1beta1.Gateway)
 	if ok {
-		klog.InfoS(utils.FormatRavenEngine("adding gateway %s", gw.GetName()))
+		klog.Infof("adding gateway %s", gw.GetName())
 		e.queue.Add(gw.DeepCopy())
 	}
 	return ok
@@ -187,10 +203,8 @@ func (e *Engine) updateGateway(evt event.UpdateEvent) bool {
 	if ok1 && ok2 {
 		if oldGw.ResourceVersion != newGw.ResourceVersion {
 			update = true
-			klog.InfoS(utils.FormatRavenEngine("updating gateway, %s", newGw.GetName()))
+			klog.Infof("updating gateway, %s", newGw.GetName())
 			e.queue.Add(newGw.DeepCopy())
-		} else {
-			klog.InfoS(utils.FormatRavenEngine("skip handle update gateway"), klog.KObj(newGw))
 		}
 	}
 	return update
@@ -199,7 +213,7 @@ func (e *Engine) updateGateway(evt event.UpdateEvent) bool {
 func (e *Engine) deleteGateway(evt event.DeleteEvent) bool {
 	gw, ok := evt.Object.(*v1beta1.Gateway)
 	if ok {
-		klog.InfoS(utils.FormatRavenEngine("deleting gateway, %s", gw.GetName()))
+		klog.Infof("deleting gateway, %s", gw.GetName())
 		e.queue.Add(gw.DeepCopy())
 	}
 	return ok

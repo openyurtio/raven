@@ -20,13 +20,14 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"reflect"
 	"strconv"
+	"time"
 
 	"github.com/EvilSuperstars/go-cidrman"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -51,9 +52,8 @@ type TunnelEngine struct {
 	routeDriver  routedriver.Driver
 	vpnDriver    vpndriver.Driver
 
-	nodeInfos       map[types.NodeName]*v1beta1.NodeInfo
-	network         *types.Network
-	lastSeenNetwork *types.Network
+	nodeInfos map[types.NodeName]*v1beta1.NodeInfo
+	network   *types.Network
 }
 
 func (c *TunnelEngine) InitDriver() error {
@@ -74,20 +74,24 @@ func (c *TunnelEngine) InitDriver() error {
 	if err != nil {
 		return fmt.Errorf("fail to initialize vpn driver: %s, %s", c.config.Tunnel.VPNDriver, err)
 	}
-	klog.Info(utils.FormatTunnel("route driver %s and vpn driver %s are initialized", c.config.Tunnel.RouteDriver, c.config.Tunnel.VPNDriver))
+	klog.Infof("route driver %s and vpn driver %s are initialized", c.config.Tunnel.RouteDriver, c.config.Tunnel.VPNDriver)
 	return nil
 }
 
-func (c *TunnelEngine) CleanupDriver() error {
-	err := c.routeDriver.Cleanup()
-	if err != nil {
-		return fmt.Errorf("fail to cleanup route driver: %s", err.Error())
-	}
-	err = c.vpnDriver.Cleanup()
-	if err != nil {
-		return fmt.Errorf("fail to cleanup vpn driver: %s", err.Error())
-	}
-	return nil
+func (c *TunnelEngine) CleanupDriver() {
+	_ = wait.PollImmediate(time.Second, 5*time.Second, func() (done bool, err error) {
+		err = c.vpnDriver.Cleanup()
+		if err != nil {
+			klog.Errorf("fail to cleanup vpn driver: %s", err.Error())
+			return false, nil
+		}
+		err = c.routeDriver.Cleanup()
+		if err != nil {
+			klog.Errorf("fail to cleanup route driver: %s", err.Error())
+			return false, nil
+		}
+		return true, nil
+	})
 }
 
 func (c *TunnelEngine) Status() bool {
@@ -105,7 +109,7 @@ func (c *TunnelEngine) Status() bool {
 func (c *TunnelEngine) Handler() error {
 	if c.config.Tunnel.NATTraversal {
 		if err := c.checkNatCapability(); err != nil {
-			klog.Errorf(utils.FormatTunnel("fail to check the capability of NAT, error %s", err.Error()))
+			klog.Errorf("fail to check the capability of NAT, error %s", err.Error())
 			return err
 		}
 	}
@@ -154,26 +158,18 @@ func (c *TunnelEngine) Handler() error {
 		}
 		c.syncGateway(gw)
 	}
-	if reflect.DeepEqual(c.network, c.lastSeenNetwork) {
-		klog.Info("network not changed, skip to process")
-		return nil
-	}
 	nw := c.network.Copy()
 	klog.InfoS("applying network", "localEndpoint", nw.LocalEndpoint, "remoteEndpoint", nw.RemoteEndpoints)
 	err = c.vpnDriver.Apply(nw, c.routeDriver.MTU)
 	if err != nil {
-		klog.ErrorS(err, "error apply vpn driver")
+		klog.Errorf("error apply vpn driver, error %s", err.Error())
 		return err
 	}
 	err = c.routeDriver.Apply(nw, c.vpnDriver.MTU)
 	if err != nil {
-		klog.ErrorS(err, "error apply route driver")
+		klog.Errorf("error apply route driver, error %s", err.Error())
 		return err
 	}
-
-	// Only update lastSeenNetwork when all operations succeeded.
-	c.lastSeenNetwork = c.network
-
 	return nil
 }
 

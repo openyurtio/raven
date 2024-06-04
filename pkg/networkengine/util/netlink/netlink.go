@@ -41,6 +41,7 @@ var (
 	RuleDel          = ruleDel
 
 	XfrmPolicyFlush = xfrmPolicyFlush
+	XfrmStateFlush  = xfrmStateFlush
 
 	NeighAdd     = neighAdd
 	NeighReplace = neighReplace
@@ -124,6 +125,16 @@ func xfrmPolicyFlush() (err error) {
 		return
 	}
 	klog.V(5).InfoS("netlink.XfrmPolicyFlush succeeded")
+	return nil
+}
+
+func xfrmStateFlush() (err error) {
+	err = netlink.XfrmStateFlush(0)
+	if err != nil {
+		klog.ErrorS(err, "error on netlink.XfrmStateFlush")
+		return
+	}
+	klog.V(5).InfoS("netlink.XfrmStateFlush succeeded")
 	return nil
 }
 
