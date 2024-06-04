@@ -24,6 +24,7 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/vdobler/ht/errorlist"
 	"github.com/vishvananda/netlink"
@@ -36,7 +37,6 @@ import (
 	ipsetutil "github.com/openyurtio/raven/pkg/networkengine/util/ipset"
 	iptablesutil "github.com/openyurtio/raven/pkg/networkengine/util/iptables"
 	"github.com/openyurtio/raven/pkg/types"
-	"github.com/openyurtio/raven/pkg/utils"
 )
 
 const (
@@ -53,7 +53,8 @@ const (
 
 	ravenMark = 0x40
 
-	ravenMarkSet = "raven-mark-set"
+	ravenMarkSet     = "raven-mark-set"
+	ravenMarkSetType = "hash:net"
 )
 
 var (
@@ -76,11 +77,11 @@ type vxlan struct {
 
 func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error)) (err error) {
 	if network.LocalEndpoint == nil || len(network.RemoteEndpoints) == 0 {
-		klog.Info(utils.FormatTunnel("no local gateway or remote gateway is found, cleaning up route setting"))
+		klog.Info("no local gateway or remote gateway is found, cleaning up route setting")
 		return vx.Cleanup()
 	}
 	if len(network.LocalNodeInfo) == 1 {
-		klog.Infof(utils.FormatTunnel("only gateway node exist in current gateway, cleaning up route setting"))
+		klog.Info("only gateway node exist in current gateway, cleaning up route setting")
 		return vx.Cleanup()
 	}
 
@@ -103,8 +104,7 @@ func (vx *vxlan) Apply(network *types.Network, vpnDriverMTUFn func() (int, error
 	// The desired and current ipset entries calculated from given network.
 	// The key is ip set entry
 	var desiredSet, currentSet map[string]*netlink.IPSetEntry
-
-	vx.ipset, err = ipsetutil.New(ravenMarkSet)
+	vx.ipset, err = ipsetutil.New(ravenMarkSet, ravenMarkSetType, ipsetutil.IpsetWrapperOption{})
 	if err != nil {
 		return fmt.Errorf("error create ip set: %s", err)
 	}
@@ -256,7 +256,7 @@ func (vx *vxlan) Init() (err error) {
 		return err
 	}
 
-	vx.ipset, err = ipsetutil.New(ravenMarkSet)
+	vx.ipset, err = ipsetutil.New(ravenMarkSet, ravenMarkSetType, ipsetutil.IpsetWrapperOption{})
 	if err != nil {
 		return err
 	}
@@ -530,7 +530,7 @@ func (vx *vxlan) calIPSetOnNode(network *types.Network) map[string]*netlink.IPSe
 				CIDR:    uint8(ones),
 				Replace: true,
 			}
-			set[ipsetutil.SetEntryKey(entry)] = entry
+			set[vx.ipset.Key(entry)] = entry
 		}
 	}
 	return set
@@ -569,14 +569,16 @@ func (vx *vxlan) Cleanup() error {
 	}
 
 	// Clean may be called more than one time, so we should ensure ip set exists
-	vx.ipset, err = ipsetutil.New(ravenMarkSet)
+	vx.ipset, err = ipsetutil.New(ravenMarkSet, ravenMarkSetType, ipsetutil.IpsetWrapperOption{})
 	if err != nil {
 		errList = errList.Append(fmt.Errorf("error ensure ip set %s: %s", ravenMarkSet, err))
 	}
+	time.Sleep(time.Second)
 	err = vx.ipset.Flush()
 	if err != nil {
 		errList = errList.Append(fmt.Errorf("error flushing ipset: %s", err))
 	}
+	time.Sleep(time.Second)
 	err = vx.ipset.Destroy()
 	if err != nil {
 		errList = errList.Append(fmt.Errorf("error destroying ipset: %s", err))

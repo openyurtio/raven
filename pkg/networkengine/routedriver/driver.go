@@ -25,7 +25,6 @@ import (
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/pkg/types"
-	"github.com/openyurtio/raven/pkg/utils"
 )
 
 // Driver is the interface for inner gateway routing mechanism.
@@ -61,9 +60,9 @@ func RegisterRouteDriver(name string, factory Factory) {
 	driversMutex.Lock()
 	defer driversMutex.Unlock()
 	if _, found := drivers[name]; found {
-		klog.Fatal(utils.FormatTunnel("route drivers %q was registered twice", name))
+		klog.Fatal("route drivers %q was registered twice", name)
 	}
-	klog.V(1).Info(utils.FormatTunnel("registered route driver %q", name))
+	klog.Info("registered route driver %q", name)
 	drivers[name] = factory
 }
 
@@ -71,7 +70,7 @@ func New(name string, cfg *config.Config) (Driver, error) {
 	driversMutex.Lock()
 	defer driversMutex.Unlock()
 	if _, found := drivers[name]; !found {
-		klog.Fatal(utils.FormatTunnel("route driver %q not found", name))
+		klog.Fatal("route driver %q not found", name)
 	}
 	return drivers[name](cfg)
 }

@@ -74,7 +74,7 @@ func (c *ProxyClient) Start(ctx context.Context) error {
 	}
 	clientCertManager, err := factory.NewCertManagerFactory(c.client).New(certMgrCfg)
 	if err != nil {
-		klog.Errorf(utils.FormatProxyClient("failed to new cert manager factory for proxy client %s, error %s", c.name, err.Error()))
+		klog.Errorf("failed to new cert manager factory for proxy client %s, error %s", c.name, err.Error())
 		return fmt.Errorf("failed to new cert manager factory for proxy client %s, error %s", c.name, err.Error())
 	}
 	clientCertManager.Start()
@@ -83,13 +83,13 @@ func (c *ProxyClient) Start(ctx context.Context) error {
 		if clientCertManager.Current() != nil {
 			return true, nil
 		}
-		klog.Infof(utils.FormatProxyClient("certificate %s not signed, waiting...", certMgrCfg.CommonName))
+		klog.Infof("certificate %s not signed, waiting...", certMgrCfg.CommonName)
 		return false, nil
 	}, ctx.Done())
 	for addr := range c.servers {
 		tlsCfg, err := certmanager.GenTLSConfigUseCertMgrAndCA(clientCertManager, addr, utils.RavenCAFile)
 		if err != nil {
-			klog.Error(utils.FormatProxyClient("failed to generate TLS Config"))
+			klog.Error("failed to generate TLS Config")
 			return fmt.Errorf("failed to generate TLS Config")
 		}
 		c.servers[addr] = tlsCfg
@@ -105,7 +105,7 @@ func (c *ProxyClient) run(stopCh <-chan struct{}) {
 	for addr, cert := range c.servers {
 		client := c.NewClient(addr, cert, stopCh)
 		client.Serve()
-		klog.Infof(utils.FormatProxyClient("start serving grpc request redirected from %s", addr))
+		klog.Infof("start serving grpc request redirected from %s", addr)
 	}
 }
 

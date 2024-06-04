@@ -28,7 +28,6 @@ import (
 	"k8s.io/klog/v2"
 
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
-	"github.com/openyurtio/raven/pkg/utils"
 )
 
 const (
@@ -42,7 +41,7 @@ func ensureVxlanLink(vxlan netlink.Vxlan, vtepIP net.IP) (netlink.Link, error) {
 			return link
 		}
 		if _, ok := err.(netlink.LinkNotFoundError); !ok {
-			klog.Errorf(utils.FormatTunnel("error get vxlan link: %v", err))
+			klog.Errorf("error get vxlan link: %v", err)
 		}
 		return nil
 	}

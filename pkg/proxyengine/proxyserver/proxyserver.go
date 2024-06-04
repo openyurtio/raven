@@ -149,11 +149,11 @@ func (c *ProxyServer) Start(ctx context.Context) error {
 		if serverCertMgr.Current() != nil && proxyCertMgr.Current() != nil {
 			return true, nil
 		}
-		klog.Infof(utils.FormatProxyServer("certificate %s and %s not signed, waiting...", serverCertCfg.ComponentName, proxyCertCfg.ComponentName))
+		klog.Infof("certificate %s and %s not signed, waiting...", serverCertCfg.ComponentName, proxyCertCfg.ComponentName)
 		return false, nil
 	}, ctx.Done())
 
-	klog.Infof(utils.FormatProxyServer("certificate %s and %s ok", serverCertCfg.ComponentName, proxyCertCfg.ComponentName))
+	klog.Infof("certificate %s and %s ok", serverCertCfg.ComponentName, proxyCertCfg.ComponentName)
 	c.serverTLSConfig, err = certmanager.GenTLSConfigUseCurrentCertAndCertPool(serverCertMgr.Current, c.rootCert, "server")
 	if err != nil {
 		return err
@@ -171,7 +171,7 @@ func (c *ProxyServer) Start(ctx context.Context) error {
 }
 
 func (c *ProxyServer) runServers(ctx context.Context) error {
-	klog.Info(utils.FormatProxyServer("start proxy server"))
+	klog.Info("start proxy server")
 	strategy := []anpserver.ProxyStrategy{anpserver.ProxyStrategyDestHost}
 	proxyServer := anpserver.NewProxyServer(c.nodeName, strategy, 1, &anpserver.AgentTokenAuthenticationOptions{})
 	NewProxies(&anpserver.Tunnel{Server: proxyServer}, c.interceptorUDSFile).Run(ctx)
@@ -192,8 +192,8 @@ func (c *ProxyServer) getProxyServerIPsAndDNSName() (dnsName []string, ipAddr []
 	var svc v1.Service
 	err := c.client.Get(context.TODO(), types.NamespacedName{Namespace: utils.WorkingNamespace, Name: utils.GatewayProxyInternalService}, &svc)
 	if err != nil {
-		klog.Errorf(utils.FormatProxyServer("failed to get internal service %s/%s to get proxy server IPs and DNSNames, error %s",
-			svc.GetNamespace(), svc.GetName(), err.Error()))
+		klog.Errorf("failed to get internal service %s/%s to get proxy server IPs and DNSNames, error %s",
+			svc.GetNamespace(), svc.GetName(), err.Error())
 		return
 	}
 	dnsName = append(dnsName, getDefaultDomainsForSvc(svc.GetNamespace(), svc.GetName())...)
@@ -209,8 +209,8 @@ func (c *ProxyServer) getProxyServerIPsAndDNSName() (dnsName []string, ipAddr []
 		}.AsSelector(),
 	})
 	if err != nil {
-		klog.Errorf(utils.FormatProxyServer("failed to get public serivce for gateway %s, node %s to get proxy server IPs and DNSNames, error %s",
-			c.gateway.GetName(), c.nodeName, err.Error()))
+		klog.Errorf("failed to get public serivce for gateway %s, node %s to get proxy server IPs and DNSNames, error %s",
+			c.gateway.GetName(), c.nodeName, err.Error())
 		return
 	}
 

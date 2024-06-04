@@ -67,21 +67,21 @@ func NewHeaderManager(client client.Client, gatewayName string, isIPv4 bool) Wra
 func (h *headerManger) Handler(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r == nil {
-			klog.Errorf(utils.FormatProxyServer("request is nil, skip it"))
+			klog.Errorf("request is nil, skip it")
 			return
 		}
 		oldHost := r.Host
 		var host, ip, port string
 		var err error
 		if isAPIServerRequest(r) {
-			klog.Info(utils.FormatProxyServer("request from apiserver with host %s and url %s is processed by header manager", oldHost, r.URL.String()))
+			klog.Infof("request from apiserver with host %s and url %s is processed by header manager", oldHost, r.URL.String())
 			host, ip, port, err = h.getAPIServerRequestDestAddress(r)
 			if err != nil {
 				logAndHTTPError(w, http.StatusBadRequest, "request host %s and url %s is invalid, %s", r.Host, r.URL.String(), err.Error())
 				return
 			}
 		} else {
-			klog.Info(utils.FormatProxyServer("normal request with host %s and url %s is processed by header manager", oldHost, r.URL.String()))
+			klog.Infof("normal request with host %s and url %s is processed by header manager", oldHost, r.URL.String())
 			host, ip, port, err = h.getNormalRequestDestAddress(r)
 			if err != nil {
 				logAndHTTPError(w, http.StatusBadRequest, "request host %s and url %s is invalid, %s", r.Host, r.URL.String(), err.Error())
@@ -117,11 +117,11 @@ func (h *headerManger) Handler(handler http.Handler) http.Handler {
 		metrics.Metrics.IncInFlightRequests(r.Method, r.URL.Path)
 		defer metrics.Metrics.DecInFlightRequests(r.Method, r.URL.Path)
 
-		klog.Infoln(utils.FormatProxyServer("start handling request %s %s, req.Host changed from %s to %s, remote address is %s",
-			r.Method, r.URL.String(), oldHost, r.Host, r.RemoteAddr))
+		klog.Infof("start handling request %s %s, req.Host changed from %s to %s, remote address is %s",
+			r.Method, r.URL.String(), oldHost, r.Host, r.RemoteAddr)
 		start := time.Now()
 		handler.ServeHTTP(w, r)
-		klog.Infoln(utils.FormatProxyServer("finish handle request %s %s, handle lasts %v", r.Method, r.URL.String(), time.Since(start)))
+		klog.Infof("finish handle request %s %s, handle lasts %v", r.Method, r.URL.String(), time.Since(start))
 	})
 }
 
@@ -170,7 +170,7 @@ func (h *headerManger) getNormalRequestDestAddress(r *http.Request) (name, ip, p
 	}
 	ipAddress := net.ParseIP(nodeName)
 	if ipAddress != nil {
-		klog.Warning(utils.FormatProxyServer("raven proxy server not support dest address %s and request.URL is %s", ipAddress, r.URL.String()))
+		klog.Warningf("raven proxy server not support dest address %s and request.URL is %s", ipAddress, r.URL.String())
 		return "", "", "", nil
 	}
 	var node v1.Node
