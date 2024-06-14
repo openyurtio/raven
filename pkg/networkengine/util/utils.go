@@ -21,7 +21,6 @@ package networkutil
 
 import (
 	"fmt"
-	"net"
 	"syscall"
 
 	"github.com/vdobler/ht/errorlist"
@@ -30,11 +29,6 @@ import (
 
 	ipsetutil "github.com/openyurtio/raven/pkg/networkengine/util/ipset"
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
-)
-
-var (
-	AllZeroMAC     = net.HardwareAddr{0, 0, 0, 0, 0, 0}
-	AllZeroAddress = "0.0.0.0/0"
 )
 
 func NewRavenRule(rulePriority int, routeTableID int) *netlink.Rule {
@@ -94,7 +88,7 @@ func ListIPSetOnNode(set ipsetutil.IPSetInterface) (map[string]*netlink.IPSetEnt
 	}
 	ro := make(map[string]*netlink.IPSetEntry)
 	for i := range info.Entries {
-		ro[ipsetutil.SetEntryKey(&info.Entries[i])] = &info.Entries[i]
+		ro[set.Key(&info.Entries[i])] = &info.Entries[i]
 	}
 	return ro, nil
 }
@@ -114,7 +108,11 @@ func ApplyRules(current, desired map[string]*netlink.Rule) (err error) {
 		}
 	}
 	// add expect ip rules
-	for _, v := range desired {
+	for k, v := range desired {
+		_, ok := current[k]
+		if ok {
+			continue
+		}
 		klog.InfoS("adding rule", "src", v.Src, "lookup", v.Table)
 		err = netlinkutil.RuleAdd(v)
 		errList = errList.Append(err)

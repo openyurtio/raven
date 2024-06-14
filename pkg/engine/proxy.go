@@ -79,7 +79,7 @@ func (p *ProxyEngine) Handler() error {
 		srcAddr := getSrcAddressForProxyServer(p.client, p.nodeName)
 		err = p.startProxyServer()
 		if err != nil {
-			klog.Errorf(utils.FormatProxyServer("failed to start proxy server, error %s", err.Error()))
+			klog.Errorf("failed to start proxy server, error %s", err.Error())
 			return err
 		}
 		p.serverLocalEndpoints = srcAddr
@@ -93,7 +93,7 @@ func (p *ProxyEngine) Handler() error {
 			time.Sleep(2 * time.Second)
 			err = p.startProxyServer()
 			if err != nil {
-				klog.Errorf(utils.FormatProxyServer("failed to start proxy server, error %s", err.Error()))
+				klog.Errorf("failed to start proxy server, error %s", err.Error())
 				return err
 			}
 			p.serverLocalEndpoints = srcAddr
@@ -106,7 +106,7 @@ func (p *ProxyEngine) Handler() error {
 	case StartType:
 		err = p.startProxyClient()
 		if err != nil {
-			klog.Errorf(utils.FormatProxyServer("failed to start proxy client, error %s", err.Error()))
+			klog.Errorf("failed to start proxy client, error %s", err.Error())
 			return err
 		}
 	case StopType:
@@ -114,7 +114,7 @@ func (p *ProxyEngine) Handler() error {
 	case RestartType:
 		dstAddr := getDestAddressForProxyClient(p.client, p.localGateway)
 		if len(dstAddr) < 1 {
-			klog.Infoln(utils.FormatProxyClient("dest address is empty, will not connected it"))
+			klog.Infoln("dest address is empty, will not connected it")
 			return nil
 		}
 		if strings.Join(p.clientRemoteEndpoints, ",") != strings.Join(dstAddr, ",") {
@@ -122,7 +122,7 @@ func (p *ProxyEngine) Handler() error {
 			time.Sleep(2 * time.Second)
 			err = p.startProxyClient()
 			if err != nil {
-				klog.Errorf(utils.FormatProxyServer("failed to start proxy client, error %s", err.Error()))
+				klog.Errorf("failed to start proxy client, error %s", err.Error())
 				return err
 			}
 		}
@@ -133,7 +133,7 @@ func (p *ProxyEngine) Handler() error {
 }
 
 func (p *ProxyEngine) startProxyServer() error {
-	klog.Infoln(utils.FormatProxyServer("start raven l7 proxy server"))
+	klog.Infoln("start raven l7 proxy server")
 	if p.localGateway == nil {
 		return fmt.Errorf("unknown gateway for node %s, can not start proxy server", p.nodeName)
 	}
@@ -164,7 +164,7 @@ func (p *ProxyEngine) startProxyServer() error {
 }
 
 func (p *ProxyEngine) stopProxyServer() {
-	klog.Infoln(utils.FormatProxyServer("Stop raven l7 proxy server"))
+	klog.Infoln("Stop raven l7 proxy server")
 	cancel := p.proxyCtx.GetServerCancelFunc()
 	cancel()
 	p.proxyOption.SetServerStatus(false)
@@ -172,11 +172,11 @@ func (p *ProxyEngine) stopProxyServer() {
 }
 
 func (p *ProxyEngine) startProxyClient() error {
-	klog.Infoln(utils.FormatProxyClient("start raven l7 proxy client"))
+	klog.Infoln("start raven l7 proxy client")
 	var err error
 	dstAddr := getDestAddressForProxyClient(p.client, p.localGateway)
 	if len(dstAddr) < 1 {
-		klog.Infoln(utils.FormatProxyClient("dest address is empty, will not connected it"))
+		klog.Infoln("dest address is empty, will not connected it")
 		return nil
 	}
 	p.clientRemoteEndpoints = dstAddr
@@ -195,13 +195,14 @@ func (p *ProxyEngine) startProxyClient() error {
 	err = pc.Start(ctx)
 	if err != nil {
 		klog.Errorf("failed to start proxy client, error %s", err.Error())
+		return err
 	}
 	p.proxyOption.SetClientStatus(true)
 	return nil
 }
 
 func (p *ProxyEngine) stopProxyClient() {
-	klog.Infoln(utils.FormatProxyClient("stop raven l7 proxy client"))
+	klog.Infoln("stop raven l7 proxy client")
 	cancel := p.proxyCtx.GetClientCancelFunc()
 	cancel()
 	p.proxyOption.SetClientStatus(false)

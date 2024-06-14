@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/pflag"
 	v1 "k8s.io/api/core/v1"
@@ -50,6 +51,8 @@ type AgentOptions struct {
 	Kubeconfig         string
 	MetricsBindAddress string
 	HealthProbeAddr    string
+	SyncRules          bool
+	SyncPeriod         metav1.Duration
 }
 
 type TunnelOptions struct {
@@ -91,6 +94,12 @@ func (o *AgentOptions) Validate() error {
 			}
 		}
 	}
+	if o.SyncPeriod.Duration < time.Minute {
+		o.SyncPeriod.Duration = time.Minute
+	}
+	if o.SyncPeriod.Duration > 24*time.Hour {
+		o.SyncPeriod.Duration = 24 * time.Hour
+	}
 	return nil
 }
 
@@ -103,6 +112,8 @@ func (o *AgentOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.RouteDriver, "route-driver", o.RouteDriver, `The Route driver name. (default "vxlan")`)
 	fs.StringVar(&o.MetricsBindAddress, "metric-bind-addr", o.MetricsBindAddress, `Binding address of tunnel metrics. (default ":10265")`)
 	fs.StringVar(&o.HealthProbeAddr, "health-probe-addr", o.HealthProbeAddr, `The address the healthz/readyz endpoint binds to.. (default ":10275")`)
+	fs.BoolVar(&o.SyncRules, "sync-raven-rules", true, "Whether to synchronize raven rules regularly")
+	fs.DurationVar(&o.SyncPeriod.Duration, "sync-raven-rules-period", 10*time.Minute, "The period for reconciling routes created for nodes by cloud provider. The minimum value is 1 minute and the maximum value is 24 hour")
 
 	fs.StringVar(&o.VPNPort, "vpn-bind-port", o.VPNPort, `Binding port of vpn. (default ":4500")`)
 	fs.BoolVar(&o.NATTraversal, "nat-traversal", o.NATTraversal, `Enable NAT Traversal or not. (default "false")`)
@@ -141,8 +152,10 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 	}
 	cfg = restclient.AddUserAgent(cfg, "raven-agent-ds")
 	c := &config.Config{
-		NodeName: o.NodeName,
-		NodeIP:   o.NodeIP,
+		NodeName:   o.NodeName,
+		NodeIP:     o.NodeIP,
+		SyncRules:  o.SyncRules,
+		SyncPeriod: o.SyncPeriod,
 	}
 	c.KubeConfig = cfg
 	c.MetricsBindAddress = resolveAddress(c.MetricsBindAddress, resolveLocalHost(), strconv.Itoa(DefaultTunnelMetricsPort))

@@ -19,15 +19,17 @@ package app
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/lorenzosaino/go-sysctl"
+	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/cmd/agent/app/options"
 	ravenengine "github.com/openyurtio/raven/pkg/engine"
 	"github.com/openyurtio/raven/pkg/features"
-	"github.com/spf13/cobra"
 )
 
 // NewRavenAgentCommand creates a new raven agent command
@@ -70,6 +72,15 @@ func Run(ctx context.Context, cfg *config.CompletedConfig) error {
 	}
 	klog.Info("engine successfully start")
 	engine.Start()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		<-ctx.Done()
+		time.Sleep(time.Second)
+		engine.Cleanup()
+		wg.Done()
+	}()
+	wg.Wait()
 	return nil
 }
 

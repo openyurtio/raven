@@ -23,7 +23,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/openyurtio/raven/pkg/utils"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
@@ -47,8 +46,8 @@ func NewProxies(handler http.Handler, udsFile string) Server {
 
 func (p *proxies) Run(ctx context.Context) {
 	go func(ctx context.Context) {
-		klog.Info(utils.FormatProxyServer("start listen unix %s", p.udsSockFile))
-		defer klog.Info(utils.FormatProxyServer("finish listen unix %s", p.udsSockFile))
+		klog.Info("start listen unix %s", p.udsSockFile)
+		defer klog.Info("finish listen unix %s", p.udsSockFile)
 		server := &http.Server{
 			Handler:     p.handler,
 			ReadTimeout: 10 * time.Second,
@@ -85,8 +84,8 @@ func NewMaster(handler http.Handler, tlsCfg *tls.Config, secureAddr, insecureAdd
 
 func (m *master) Run(ctx context.Context) {
 	go func(ctx context.Context) {
-		klog.Info(utils.FormatProxyServer("start handling https request from master at %s", m.secureAddr))
-		defer klog.Info(utils.FormatProxyServer("finish handling https request from master at %s", m.secureAddr))
+		klog.Info("start handling https request from master at %s", m.secureAddr)
+		defer klog.Info("finish handling https request from master at %s", m.secureAddr)
 		server := http.Server{
 			Addr:         m.secureAddr,
 			Handler:      m.handler,
@@ -102,13 +101,13 @@ func (m *master) Run(ctx context.Context) {
 			}
 		}(ctx)
 		if err := server.ListenAndServeTLS("", ""); err != nil {
-			klog.Errorf(utils.FormatProxyServer("failed to serve https request from master: %s", err.Error()))
+			klog.Errorf("failed to serve https request from master: %s", err.Error())
 		}
 	}(ctx)
 
 	go func(ctx context.Context) {
-		klog.Infof(utils.FormatProxyServer("start handling https request from master at %s", m.insecureAddr))
-		defer klog.Infof(utils.FormatProxyServer("finish handling https request from master at %s", m.insecureAddr))
+		klog.Infof("start handling https request from master at %s", m.insecureAddr)
+		defer klog.Infof("finish handling https request from master at %s", m.insecureAddr)
 		server := http.Server{
 			Addr:         m.insecureAddr,
 			Handler:      m.handler,
@@ -123,7 +122,7 @@ func (m *master) Run(ctx context.Context) {
 			}
 		}(ctx)
 		if err := server.ListenAndServe(); err != nil {
-			klog.Errorf(utils.FormatProxyServer("failed to serve https request from master: %s", err.Error()))
+			klog.Errorf("failed to serve https request from master: %s", err.Error())
 		}
 	}(ctx)
 }
@@ -140,8 +139,8 @@ func NewAgent(tlsCfg *tls.Config, proxyServer *anpserver.ProxyServer, address st
 
 func (c *agent) Run(ctx context.Context) {
 	go func(ctx context.Context) {
-		klog.Info(utils.FormatProxyServer("start handling grpc request from proxy client at %s", c.address))
-		defer klog.Info(utils.FormatProxyServer("finish handling grpc request from proxy client at %s", c.address))
+		klog.Info("start handling grpc request from proxy client at %s", c.address)
+		defer klog.Info("finish handling grpc request from proxy client at %s", c.address)
 		ka := keepalive.ServerParameters{
 			MaxConnectionIdle: 10 * time.Minute,
 			Time:              10 * time.Second,
@@ -151,7 +150,7 @@ func (c *agent) Run(ctx context.Context) {
 		anpagent.RegisterAgentServiceServer(grpcServer, c.proxyServer)
 		listen, err := net.Listen("tcp", c.address)
 		if err != nil {
-			klog.Errorf(utils.FormatProxyServer("failed to listen to agent on %s: %s", c.address, err.Error()))
+			klog.Errorf("failed to listen to agent on %s: %s", c.address, err.Error())
 			return
 		}
 		defer listen.Close()
@@ -160,7 +159,7 @@ func (c *agent) Run(ctx context.Context) {
 			grpcServer.Stop()
 		}(ctx)
 		if err := grpcServer.Serve(listen); err != nil {
-			klog.Errorf(utils.FormatProxyServer("failed to server grpc request from proxy agent server, error %s", err.Error()))
+			klog.Errorf("failed to server grpc request from proxy agent server, error %s", err.Error())
 		}
 	}(ctx)
 }

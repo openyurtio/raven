@@ -59,6 +59,9 @@ containerEnv:
         secretKeyRef:
           key: vpn-connection-psk
           name: raven-agent-secret
+sync:
+  syncRule: true
+  syncPeriod: 30m
 
 vpn:
   driver: libreswan
@@ -86,4 +89,4 @@ proxy:
   metricsBindAddr: ":10266"
 
 rollingUpdate:
-  maxUnavailable: 5%
+  maxUnavailable: 20%

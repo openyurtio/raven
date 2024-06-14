@@ -158,10 +158,10 @@ func (c *Interceptor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // serverRequest serves the normal requests, e.g., kubectl logs
 func serveRequest(conn net.Conn, w http.ResponseWriter, r *http.Request) {
-	klog.Info(utils.FormatProxyServer("interceptor: start serving request %s with header: host %s, proxy mode: %s",
-		r.URL.String(), r.Header[utils.RavenProxyHostHeaderKey], r.Header[utils.RavenProxyServerForwardModeHeaderKey]))
-	defer klog.Info(utils.FormatProxyServer("interceptor: stop serving request %s with header: host %s, proxy mode: %s",
-		r.URL.String(), r.Header[utils.RavenProxyHostHeaderKey], r.Header[utils.RavenProxyServerForwardModeHeaderKey]))
+	klog.Infof("interceptor: start serving request %s with header: host %s, proxy mode: %s",
+		r.URL.String(), r.Header[utils.RavenProxyHostHeaderKey], r.Header[utils.RavenProxyServerForwardModeHeaderKey])
+	defer klog.Infof("interceptor: stop serving request %s with header: host %s, proxy mode: %s",
+		r.URL.String(), r.Header[utils.RavenProxyHostHeaderKey], r.Header[utils.RavenProxyServerForwardModeHeaderKey])
 	br := newBufioReader(conn)
 	defer putBufioReader(br)
 	resp, err := http.ReadResponse(br, r)
@@ -189,10 +189,10 @@ func serveRequest(conn net.Conn, w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 			select {
 			case <-stopCh:
-				klog.Info(utils.FormatProxyServer("chunked request(%s) normally exit", r.URL.String()))
+				klog.Info("chunked request(%s) normally exit", r.URL.String())
 			case <-ctx.Done():
-				klog.Info(utils.FormatProxyServer("chunked request(%s) to agent(%s) closed by cloud client, %v", r.URL.String(),
-					r.Header.Get(utils.RavenProxyHostHeaderKey), ctx.Err()))
+				klog.Info("chunked request(%s) to agent(%s) closed by cloud client, %v", r.URL.String(),
+					r.Header.Get(utils.RavenProxyHostHeaderKey), ctx.Err())
 				conn.Close()
 			}
 		}(r, conn, stopCh)
@@ -203,15 +203,15 @@ func serveRequest(conn net.Conn, w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = io.Copy(writer, resp.Body)
 	if err != nil && !isHTTPCloseError(err) {
-		klog.ErrorS(err, utils.FormatProxyServer("failed to copy response from proxy server to the frontend"))
+		klog.ErrorS(err, "failed to copy response from proxy server to the frontend")
 	}
 }
 
 func serveUpgradeRequest(conn net.Conn, w http.ResponseWriter, r *http.Request) {
-	klog.Info(utils.FormatProxyServer("interceptor: start serving streaming request %s with header: host %s, proxy mode: %s",
-		r.URL.String(), r.Header[utils.RavenProxyHostHeaderKey], r.Header[utils.RavenProxyServerForwardModeHeaderKey]))
-	defer klog.Info(utils.FormatProxyServer("interceptor: stop serving streaming request %s with header: host %s, proxy mode: %s",
-		r.URL.String(), r.Header[utils.RavenProxyHostHeaderKey], r.Header[utils.RavenProxyServerForwardModeHeaderKey]))
+	klog.Infof("interceptor: start serving streaming request %s with header: host %s, proxy mode: %s",
+		r.URL.String(), r.Header[utils.RavenProxyHostHeaderKey], r.Header[utils.RavenProxyServerForwardModeHeaderKey])
+	defer klog.Infof("interceptor: stop serving streaming request %s with header: host %s, proxy mode: %s",
+		r.URL.String(), r.Header[utils.RavenProxyHostHeaderKey], r.Header[utils.RavenProxyServerForwardModeHeaderKey])
 
 	resp, rawResp, err := getResponse(conn)
 	if err != nil {
@@ -233,21 +233,21 @@ func serveUpgradeRequest(conn net.Conn, w http.ResponseWriter, r *http.Request) 
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		deadline := time.Now().Add(10 * time.Second)
 		if err = conn.SetReadDeadline(deadline); err != nil {
-			klog.Errorf(utils.FormatProxyServer("failed set proxy connect deadline, error %s", err.Error()))
+			klog.Errorf("failed set proxy connect deadline, error %s", err.Error())
 		}
 		if err = frontend.SetReadDeadline(deadline); err != nil {
-			klog.Errorf(utils.FormatProxyServer("failed set frontend connect deadline, error %s", err.Error()))
+			klog.Errorf("failed set frontend connect deadline, error %s", err.Error())
 		}
 		err = resp.Write(frontend)
 		if err != nil && !isHTTPCloseError(err) {
-			klog.Errorf(utils.FormatProxyServer("error proxying un-upgrade response from proxy channel to frontend: %s", err.Error()))
+			klog.Errorf("error proxying un-upgrade response from proxy channel to frontend: %s", err.Error())
 		}
 		return
 	}
 
 	if len(rawResp) > 0 {
 		if _, err = frontend.Write(rawResp); err != nil {
-			klog.Errorf(utils.FormatProxyServer("error proxying response bytes from tunnel to client: %s", err.Error()))
+			klog.Errorf("error proxying response bytes from tunnel to client: %s", err.Error())
 		}
 	}
 
@@ -255,7 +255,7 @@ func serveUpgradeRequest(conn net.Conn, w http.ResponseWriter, r *http.Request) 
 	go func() {
 		_, err = io.Copy(conn, frontend)
 		if err != nil && !isHTTPCloseError(err) {
-			klog.Errorf(utils.FormatProxyServer("error proxying data from frontend to proxy channel: %s", err.Error()))
+			klog.Errorf("error proxying data from frontend to proxy channel: %s", err.Error())
 		}
 		close(writerComplete)
 	}()
@@ -263,7 +263,7 @@ func serveUpgradeRequest(conn net.Conn, w http.ResponseWriter, r *http.Request) 
 	go func() {
 		_, err = io.Copy(frontend, conn)
 		if err != nil && !isHTTPCloseError(err) {
-			klog.Errorf(utils.FormatProxyServer("error proxying data from proxy channel to frontend: %s", err.Error()))
+			klog.Errorf("error proxying data from proxy channel to frontend: %s", err.Error())
 		}
 		close(readerComplete)
 	}()
@@ -276,7 +276,7 @@ func serveUpgradeRequest(conn net.Conn, w http.ResponseWriter, r *http.Request) 
 
 func logAndHTTPError(w http.ResponseWriter, errCode int, format string, i ...interface{}) {
 	errMsg := fmt.Sprintf(format, i...)
-	klog.Error(utils.FormatProxyServer(errMsg))
+	klog.Error(errMsg)
 	http.Error(w, errMsg, errCode)
 }
 
