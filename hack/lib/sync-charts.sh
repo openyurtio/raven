@@ -26,32 +26,30 @@ echo "git clone"
 cd ..
 git config --global user.email "openyurt-bot@openyurt.io"
 git config --global user.name "openyurt-bot"
-git clone --single-branch --depth 1 git@github.com:openyurtio/openyurt-helm.git openyurt-helm
+git clone --single-branch --depth 1 git@github.com:openyurtio/charts.git charts
 
-echo "clear openyurt-helm charts/raven-agent"
+echo "clear charts/raven-agent of openyurtio/charts"
 
-if [ -d "openyurt-helm/charts/raven-agent" ]
+if [ -d "charts/charts/raven-agent" ]
 then
     echo "charts raven-agent exists, remove it"
-    rm -r openyurt-helm/charts/raven-agent/*
+    rm -r charts/charts/raven-agent/*
 else
-    mkdir -p openyurt-helm/charts/raven-agent
+    mkdir -p charts/charts/raven-agent
 fi
 
-echo "copy folder raven/charts to openyurt-helm/charts"
+echo "copy folder raven/charts to openyurtio/charts/charts"
 
-cp -R raven/charts/raven-agent/* openyurt-helm/charts/raven-agent/
+cp -R raven/charts/raven-agent/* charts/charts/raven-agent/
 
-echo "push to openyurt-helm"
-echo "version: $VERSION, commit: $COMMIT_ID, tag: $TAG"
+echo "push to openyurtio/charts with commit: $COMMIT_ID"
 
-cd openyurt-helm
+cd charts
 
 if [ -z "$(git status --porcelain)" ]; then
   echo "nothing need to push, finished!"
 else
   git add .
-  git commit -m "align with raven-agent charts $VERSION from commit $COMMIT_ID"
-  git tag "$VERSION"
+  git commit -m "align with raven-agent charts from commit $COMMIT_ID"
   git push origin main
 fi
