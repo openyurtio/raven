@@ -6,7 +6,7 @@ image:
   repository: openyurt/raven-agent
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
-  tag: 0.4.2
+  tag: 0.4.3
 
 imagePullSecrets: []
 nameOverride: ""
