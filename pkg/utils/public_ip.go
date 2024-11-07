@@ -25,6 +25,9 @@ import (
 
 var (
 	APIs = [...]string{
+		"https://ifconfig.me",
+		"https://icanhazip.com",
+		"https://ipinfo.io/json",
 		"https://api.ipify.org",
 		"https://api.my-ip.io/ip",
 		"https://ip4.seeip.org",
