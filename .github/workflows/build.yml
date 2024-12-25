@@ -47,7 +47,7 @@ jobs:
           sudo go test -v -short ./pkg/... ./cmd/... -coverprofile cover.out
 
       - name: Publish Unit Test Coverage
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4.5.0
         with:
           name: codecov-umbrella
           token: ${{ secrets.CODECOV_TOKEN }}
