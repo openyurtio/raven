@@ -189,9 +189,9 @@ func serveRequest(conn net.Conn, w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 			select {
 			case <-stopCh:
-				klog.Info("chunked request(%s) normally exit", r.URL.String())
+				klog.Infof("chunked request(%s) normally exit", r.URL.String())
 			case <-ctx.Done():
-				klog.Info("chunked request(%s) to agent(%s) closed by cloud client, %v", r.URL.String(),
+				klog.Infof("chunked request(%s) to agent(%s) closed by cloud client, %v", r.URL.String(),
 					r.Header.Get(utils.RavenProxyHostHeaderKey), ctx.Err())
 				conn.Close()
 			}

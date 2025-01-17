@@ -145,8 +145,7 @@ func (h *headerManger) getAPIServerRequestDestAddress(r *http.Request) (name, ip
 	}
 	name, err = h.getGatewayNodeName(&node)
 	if err != nil {
-		return "", "", "", fmt.Errorf("gateway include node %s, has no active endpoints, error %s",
-			node.Name, err.Error())
+		return "", "", "", fmt.Errorf("can not find gateway node for node %s, error %s", node.Name, err.Error())
 	}
 	ip = getNodeIP(&node)
 	if ip == "" {
@@ -180,8 +179,7 @@ func (h *headerManger) getNormalRequestDestAddress(r *http.Request) (name, ip, p
 	}
 	name, err = h.getGatewayNodeName(&node)
 	if err != nil {
-		return "", "", "", fmt.Errorf("gateway include node %s, has no active endpoints, error %s",
-			node.Name, err.Error())
+		return "", "", "", fmt.Errorf("can not find gateway node for node %s, error %s", node.Name, err.Error())
 	}
 	ip = getNodeIP(&node)
 	if ip == "" {
@@ -241,6 +239,18 @@ func (h *headerManger) getGatewayNodeName(node *v1.Node) (string, error) {
 		}
 		return "", err
 	}
-	rand.Seed(time.Now().Unix())
-	return gw.Status.ActiveEndpoints[rand.Intn(len(gw.Status.ActiveEndpoints))].NodeName, nil
+	if gw.Status.ActiveEndpoints == nil {
+		return "", fmt.Errorf("no active endpoints for gw %s", gwName)
+	}
+	names := make([]string, 0)
+	for _, ep := range gw.Status.ActiveEndpoints {
+		if ep.Type == v1beta1.Proxy {
+			names = append(names, ep.NodeName)
+		}
+	}
+	if len(names) == 0 {
+		return "", fmt.Errorf("no active endpoints for gw %s", gwName)
+	}
+	rand.New(rand.NewSource(time.Now().Unix()))
+	return names[rand.Intn(len(names))], nil
 }
