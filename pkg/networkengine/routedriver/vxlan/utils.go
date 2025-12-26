@@ -25,7 +25,6 @@ import (
 
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
-	"k8s.io/klog/v2"
 
 	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
 )
@@ -35,38 +34,15 @@ const (
 )
 
 func ensureVxlanLink(vxlan netlink.Vxlan, vtepIP net.IP) (netlink.Link, error) {
-	linkExist := func() netlink.Link {
-		link, err := netlink.LinkByName(vxlanLinkName)
-		if err == nil {
-			return link
-		}
-		if _, ok := err.(netlink.LinkNotFoundError); !ok {
-			klog.Errorf("error get vxlan link: %v", err)
-		}
-		return nil
-	}
-	vxLink := linkExist()
-	// add link
-	if vxLink == nil {
-		err := netlink.LinkAdd(&vxlan)
-		if err != nil {
-			return nil, fmt.Errorf("error add vxlan link: %v", err)
-		}
-		vxLink = linkExist()
-	} else {
-		if isVxlanConfigChanged(&vxlan, vxLink) {
-			if err := netlink.LinkDel(vxLink); err != nil {
-				return nil, fmt.Errorf("error del existing vxlan: %v", err)
-			}
-			if err := netlink.LinkAdd(&vxlan); err != nil {
-				return nil, fmt.Errorf("error add vxlan link: %v", err)
-			}
-		}
-	}
-	err := netlink.LinkSetUp(vxLink)
+	vxLink, err := createVxLanLink(&vxlan)
 	if err != nil {
+		return nil, fmt.Errorf("failed to create expect vxlan link, error:%v", err)
+	}
+
+	if err := netlink.LinkSetUp(vxLink); err != nil {
 		return nil, fmt.Errorf("error set up vxlan link: %v", err)
 	}
+
 	// add address
 	err = netlink.AddrReplace(vxLink, &netlink.Addr{
 		IPNet: &net.IPNet{
@@ -91,6 +67,30 @@ func ensureVxlanLink(vxlan netlink.Vxlan, vtepIP net.IP) (netlink.Link, error) {
 		return nil, fmt.Errorf("error ensure filter: %v", err)
 	}
 	return vxLink, nil
+}
+
+func createVxLanLink(expectedVxLanLink netlink.Link) (netlink.Link, error) {
+	currentVxLanLink, err := netlink.LinkByName(vxlanLinkName)
+	if err != nil && !isLinkNotFoundError(err) {
+		return nil, fmt.Errorf("failed to get link %s, error: %v", vxlanLinkName, err)
+	}
+
+	if currentVxLanLink != nil && isVxlanConfigChanged(currentVxLanLink, expectedVxLanLink) {
+		if err := netlink.LinkDel(currentVxLanLink); err != nil {
+			return nil, fmt.Errorf("failed to del old vxlan link, error: %v", err)
+		}
+	}
+
+	if err := netlink.LinkAdd(expectedVxLanLink); err != nil {
+		return nil, fmt.Errorf("failed to add vxlan link, error: %v", err)
+	}
+
+	return netlink.LinkByName(vxlanLinkName)
+}
+
+func isLinkNotFoundError(err error) bool {
+	_, ok := err.(netlink.LinkNotFoundError)
+	return ok
 }
 
 func ensureClsActQdsic(link netlink.Link) error {

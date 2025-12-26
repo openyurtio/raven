@@ -36,6 +36,7 @@ import (
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 	anpserver "sigs.k8s.io/apiserver-network-proxy/pkg/server"
+	"sigs.k8s.io/apiserver-network-proxy/pkg/server/proxystrategies"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/openyurtio/api/raven"
@@ -172,13 +173,13 @@ func (c *ProxyServer) Start(ctx context.Context) error {
 
 func (c *ProxyServer) runServers(ctx context.Context) error {
 	klog.Info("start proxy server")
-	strategy := []anpserver.ProxyStrategy{anpserver.ProxyStrategyDestHost}
-	proxyServer := anpserver.NewProxyServer(c.nodeName, strategy, 1, &anpserver.AgentTokenAuthenticationOptions{})
-	NewProxies(&anpserver.Tunnel{Server: proxyServer}, c.interceptorUDSFile).Run(ctx)
+	strategy := []proxystrategies.ProxyStrategy{proxystrategies.ProxyStrategyDestHost}
+	proxyServer := anpserver.NewProxyServer(c.nodeName, strategy, 1, &anpserver.AgentTokenAuthenticationOptions{}, 10)
+	NewProxies(&anpserver.Tunnel{Server: proxyServer}, c.interceptorUDSFile).Run(ctx.Done())
 	interceptor := NewInterceptor(c.interceptorUDSFile, c.proxyTLSConfig)
 	headerMgr := NewHeaderManager(c.client, c.gateway.GetName(), utilnet.IsIPv4String(c.nodeIP))
-	NewMaster(headerMgr.Handler(interceptor), c.serverTLSConfig, c.internalSecureAddress, c.internalInsecureAddress).Run(ctx)
-	NewAgent(c.serverTLSConfig, proxyServer, c.exposedAddress).Run(ctx)
+	NewMaster(headerMgr.Handler(interceptor), c.serverTLSConfig, c.internalSecureAddress, c.internalInsecureAddress).Run(ctx.Done())
+	NewAgent(c.serverTLSConfig, proxyServer, c.exposedAddress).Run(ctx.Done())
 	return nil
 }
 

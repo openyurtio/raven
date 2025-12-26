@@ -12,7 +12,6 @@ import (
 
 	"github.com/spf13/pflag"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apiserver/pkg/endpoints/discovery"
@@ -21,17 +20,14 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/openyurtio/api/raven/v1beta1"
 	"github.com/openyurtio/raven/cmd/agent/app/config"
-	"github.com/openyurtio/raven/pkg/networkengine/routedriver/vxlan"
-	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver/libreswan"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver/wireguard"
-	"github.com/openyurtio/raven/pkg/utils"
 )
 
 const (
@@ -39,7 +35,6 @@ const (
 	DefaultProxyMetricsPort  = 10266
 	DefaultHealthyProbeAddr  = 10275
 	DefaultLocalHost         = "127.0.0.1"
-	DefaultMACPrefix         = "aa:0f"
 )
 
 // AgentOptions has the information that required by the raven agent
@@ -80,26 +75,32 @@ type ProxyOptions struct {
 
 // Validate validates the AgentOptions
 func (o *AgentOptions) Validate() error {
-	if o.VPNDriver != "" {
-		if o.VPNDriver != libreswan.DriverName && o.VPNDriver != wireguard.DriverName {
-			return errors.New("currently only supports libreswan and wireguard VPN drivers")
+	if o.NodeName == "" {
+		return errors.New("either --node-name or $NODE_NAME has to be set")
+	}
+	if o.NodeIP == "" {
+		return errors.New("either --node-ip or $NODE_IP has to be set")
+	}
+
+	if o.VPNDriver != libreswan.DriverName && o.VPNDriver != wireguard.DriverName {
+		return errors.New("currently only supports libreswan and wireguard VPN drivers")
+	}
+
+	reg := regexp.MustCompile(`^[0-9a-fA-F]+$`)
+	strs := strings.Split(o.MACPrefix, ":")
+	for i := range strs {
+		if !reg.MatchString(strings.ToLower(strs[i])) {
+			return fmt.Errorf("mac prefix %s is nonstandard", o.MACPrefix)
 		}
 	}
-	if o.MACPrefix != "" {
-		reg := regexp.MustCompile(`^[0-9a-fA-F]+$`)
-		strs := strings.Split(o.MACPrefix, ":")
-		for i := range strs {
-			if !reg.MatchString(strings.ToLower(strs[i])) {
-				return fmt.Errorf("mac prefix %s is nonstandard", o.MACPrefix)
-			}
-		}
-	}
+	
 	if o.SyncPeriod.Duration < time.Minute {
 		o.SyncPeriod.Duration = time.Minute
 	}
 	if o.SyncPeriod.Duration > 24*time.Hour {
 		o.SyncPeriod.Duration = 24 * time.Hour
 	}
+
 	return nil
 }
 
@@ -134,18 +135,6 @@ func (o *AgentOptions) AddFlags(fs *pflag.FlagSet) {
 
 // Config return a raven agent config objective
 func (o *AgentOptions) Config() (*config.Config, error) {
-	if o.NodeName == "" {
-		o.NodeName = os.Getenv("NODE_NAME")
-		if o.NodeName == "" {
-			return nil, errors.New("either --node-name or $NODE_NAME has to be set")
-		}
-	}
-	if o.NodeIP == "" {
-		o.NodeIP = os.Getenv("NODE_IP")
-		if o.NodeIP == "" {
-			return nil, errors.New("either --node-ip or $NODE_IP has to be set")
-		}
-	}
 	cfg, err := clientcmd.BuildConfigFromFlags("", o.Kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kube client: %s", err)
@@ -191,27 +180,6 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 		ProxyServerCertDir:       o.ProxyServerCertDir,
 		InterceptorServerUDSFile: o.InterceptorServerUDSFile,
 	}
-	if c.Tunnel.VPNDriver == "" {
-		c.Tunnel.VPNDriver = libreswan.DriverName
-	}
-	if c.Tunnel.RouteDriver == "" {
-		c.Tunnel.RouteDriver = vxlan.DriverName
-	}
-	if c.Tunnel.VPNPort == "" {
-		c.Tunnel.VPNPort = vpndriver.DefaultVPNPort
-	}
-	if c.Tunnel.MACPrefix == "" {
-		c.Tunnel.MACPrefix = DefaultMACPrefix
-	}
-	if c.Proxy.ProxyClientCertDir == "" {
-		c.Proxy.ProxyClientCertDir = utils.RavenProxyClientCertDir
-	}
-	if c.Proxy.ProxyServerCertDir == "" {
-		c.Proxy.ProxyServerCertDir = utils.RavenProxyServerCertDir
-	}
-	if c.Proxy.InterceptorServerUDSFile == "" {
-		c.Proxy.InterceptorServerUDSFile = utils.RavenProxyServerUDSFile
-	}
 
 	c.Proxy.InternalInsecureAddress = resolveAddress(c.Proxy.InternalInsecureAddress, c.NodeIP, strconv.Itoa(v1beta1.DefaultProxyServerInsecurePort))
 	c.Proxy.InternalSecureAddress = resolveAddress(c.Proxy.InternalSecureAddress, c.NodeIP, strconv.Itoa(v1beta1.DefaultProxyServerSecurePort))
@@ -227,16 +195,11 @@ func newMgr(cfg *restclient.Config, metricsBindAddress, healthyProbeAddress stri
 	_ = v1beta1.AddToScheme(scheme)
 
 	opt := ctrl.Options{
-		Scheme:                 scheme,
-		MetricsBindAddress:     metricsBindAddress,
-		HealthProbeBindAddress: healthyProbeAddress,
-		MapperProvider: func(c *restclient.Config) (meta.RESTMapper, error) {
-			opt := func() (meta.RESTMapper, error) {
-				return restmapper.NewDiscoveryRESTMapper(
-					[]*restmapper.APIGroupResources{getGatewayAPIGroupResource(), getLegacyAPIGroupResource()}), nil
-			}
-			return apiutil.NewDynamicRESTMapper(c, apiutil.WithCustomMapper(opt))
+		Scheme: scheme,
+		Metrics: metricsserver.Options{
+			BindAddress: metricsBindAddress,
 		},
+		HealthProbeBindAddress: healthyProbeAddress,
 	}
 
 	mgr, err := ctrl.NewManager(cfg, opt)

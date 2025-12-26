@@ -18,23 +18,47 @@ package app
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/lorenzosaino/go-sysctl"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/cmd/agent/app/options"
 	ravenengine "github.com/openyurtio/raven/pkg/engine"
 	"github.com/openyurtio/raven/pkg/features"
+	"github.com/openyurtio/raven/pkg/networkengine/routedriver/vxlan"
+	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
+	"github.com/openyurtio/raven/pkg/networkengine/vpndriver/libreswan"
+	"github.com/openyurtio/raven/pkg/utils"
 )
 
 // NewRavenAgentCommand creates a new raven agent command
+
 func NewRavenAgentCommand(ctx context.Context) *cobra.Command {
-	agentOptions := &options.AgentOptions{}
+	agentOptions := &options.AgentOptions{
+		TunnelOptions: options.TunnelOptions{
+			VPNDriver:   libreswan.DriverName,
+			RouteDriver: vxlan.DriverName,
+			VPNPort:     vpndriver.DefaultVPNPort,
+			MACPrefix:   "aa:0f",
+		},
+		ProxyOptions: options.ProxyOptions{
+			ProxyClientCertDir:       utils.RavenProxyClientCertDir,
+			ProxyServerCertDir:       utils.RavenProxyServerCertDir,
+			InterceptorServerUDSFile: utils.RavenProxyServerUDSFile,
+		},
+		NodeName: os.Getenv("NODE_NAME"),
+		NodeIP:   os.Getenv("NODE_IP"),
+	}
+
 	cmd := &cobra.Command{
 		Short: fmt.Sprintf("Launch %s", "raven-agent"),
 		RunE: func(c *cobra.Command, args []string) error {
@@ -55,6 +79,13 @@ func NewRavenAgentCommand(ctx context.Context) *cobra.Command {
 
 	agentOptions.AddFlags(cmd.Flags())
 	features.DefaultMutableFeatureGate.AddFlag(cmd.Flags())
+
+	opts := zap.Options{
+		Development: true,
+	}
+	opts.BindFlags(flag.CommandLine)
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
 	return cmd
 }
 
