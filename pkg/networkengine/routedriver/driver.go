@@ -60,9 +60,9 @@ func RegisterRouteDriver(name string, factory Factory) {
 	driversMutex.Lock()
 	defer driversMutex.Unlock()
 	if _, found := drivers[name]; found {
-		klog.Fatal("route drivers %q was registered twice", name)
+		klog.Fatalf("route drivers %s was registered twice", name)
 	}
-	klog.Info("registered route driver %q", name)
+	klog.Infof("registered route driver %s", name)
 	drivers[name] = factory
 }
 
@@ -70,7 +70,7 @@ func New(name string, cfg *config.Config) (Driver, error) {
 	driversMutex.Lock()
 	defer driversMutex.Unlock()
 	if _, found := drivers[name]; !found {
-		klog.Fatal("route driver %q not found", name)
+		klog.Fatalf("route driver %s not found", name)
 	}
 	return drivers[name](cfg)
 }

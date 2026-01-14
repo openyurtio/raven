@@ -146,13 +146,13 @@ func (c *ProxyServer) Start(ctx context.Context) error {
 	}
 	proxyCertMgr.Start()
 
-	_ = wait.PollUntil(5*time.Second, func() (bool, error) {
+	_ = wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
 		if serverCertMgr.Current() != nil && proxyCertMgr.Current() != nil {
 			return true, nil
 		}
 		klog.Infof("certificate %s and %s not signed, waiting...", serverCertCfg.ComponentName, proxyCertCfg.ComponentName)
 		return false, nil
-	}, ctx.Done())
+	})
 
 	klog.Infof("certificate %s and %s ok", serverCertCfg.ComponentName, proxyCertCfg.ComponentName)
 	c.serverTLSConfig, err = certmanager.GenTLSConfigUseCurrentCertAndCertPool(serverCertMgr.Current, c.rootCert, "server")
@@ -233,7 +233,7 @@ func (c *ProxyServer) getProxyServerIPsAndDNSName() (dnsName []string, ipAddr []
 			}
 		}
 	}
-	klog.V(3).Info("cert address is %v", ipAddr)
+	klog.V(3).Infof("cert address is %v", ipAddr)
 	return
 }
 

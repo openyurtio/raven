@@ -32,7 +32,7 @@ type Engine struct {
 	manager manager.Manager
 	client  client.Client
 	option  *Option
-	queue   workqueue.RateLimitingInterface
+	queue   workqueue.TypedRateLimitingInterface[*v1beta1.Gateway]
 
 	tunnel *TunnelEngine
 	proxy  *ProxyEngine
@@ -47,7 +47,7 @@ func NewEngine(ctx context.Context, cfg *config.Config) (*Engine, error) {
 		manager:    cfg.Manager,
 		context:    ctx,
 		option:     NewEngineOption(),
-		queue:      workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "raven"),
+		queue:      workqueue.NewTypedRateLimitingQueue[*v1beta1.Gateway](workqueue.DefaultTypedControllerRateLimiter[*v1beta1.Gateway]()),
 	}
 	err := ctrl.NewControllerManagedBy(engine.manager).
 		For(&v1beta1.Gateway{}, builder.WithPredicates(predicate.Funcs{
@@ -110,12 +110,11 @@ func (e *Engine) worker() {
 }
 
 func (e *Engine) processNextWorkItem() bool {
-	obj, quit := e.queue.Get()
+	gw, quit := e.queue.Get()
 	if quit {
 		return false
 	}
-	gw, ok := obj.(*v1beta1.Gateway)
-	if !ok {
+	if gw == nil {
 		return false
 	}
 	defer e.queue.Done(gw)

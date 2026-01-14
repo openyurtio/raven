@@ -14,9 +14,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apiserver/pkg/endpoints/discovery"
 	restclient "k8s.io/client-go/rest"
-	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -93,7 +91,7 @@ func (o *AgentOptions) Validate() error {
 			return fmt.Errorf("mac prefix %s is nonstandard", o.MACPrefix)
 		}
 	}
-	
+
 	if o.SyncPeriod.Duration < time.Minute {
 		o.SyncPeriod.Duration = time.Minute
 	}
@@ -218,73 +216,6 @@ func newMgr(cfg *restclient.Config, metricsBindAddress, healthyProbeAddress stri
 	}
 
 	return mgr, nil
-}
-
-func getLegacyAPIGroupResource() *restmapper.APIGroupResources {
-	return &restmapper.APIGroupResources{
-		Group: metav1.APIGroup{
-			Versions:         []metav1.GroupVersionForDiscovery{{GroupVersion: "v1", Version: "v1"}},
-			PreferredVersion: metav1.GroupVersionForDiscovery{GroupVersion: "v1", Version: "v1"},
-		},
-		VersionedResources: map[string][]metav1.APIResource{
-			"v1": {
-				{
-					Name:               "nodes",
-					Namespaced:         false,
-					Kind:               "Node",
-					Verbs:              metav1.Verbs{"create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"},
-					ShortNames:         []string{"no"},
-					StorageVersionHash: discovery.StorageVersionHash("", "v1", "Node"),
-				},
-				{
-					Name:               "pods",
-					Namespaced:         true,
-					Kind:               "Pod",
-					Verbs:              metav1.Verbs{"create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"},
-					ShortNames:         []string{"po"},
-					StorageVersionHash: discovery.StorageVersionHash("", "v1", "Pod"),
-				},
-				{
-					Name:               "services",
-					Namespaced:         true,
-					Kind:               "Service",
-					Verbs:              metav1.Verbs{"create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"},
-					ShortNames:         []string{"svc"},
-					StorageVersionHash: discovery.StorageVersionHash("", "v1", "Service"),
-				},
-			},
-		},
-	}
-}
-
-func getGatewayAPIGroupResource() *restmapper.APIGroupResources {
-	return &restmapper.APIGroupResources{
-		Group: metav1.APIGroup{
-			Name:             v1beta1.GroupVersion.Group,
-			Versions:         []metav1.GroupVersionForDiscovery{{GroupVersion: v1beta1.GroupVersion.String(), Version: v1beta1.GroupVersion.Version}},
-			PreferredVersion: metav1.GroupVersionForDiscovery{GroupVersion: v1beta1.GroupVersion.String(), Version: v1beta1.GroupVersion.Version},
-		},
-		VersionedResources: map[string][]metav1.APIResource{
-			v1beta1.GroupVersion.Version: {
-				{
-					Name:               "gateways",
-					Namespaced:         false,
-					SingularName:       "gateway",
-					Kind:               "Gateway",
-					Verbs:              metav1.Verbs{"create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"},
-					ShortNames:         []string{"gw"},
-					Categories:         []string{"all"},
-					StorageVersionHash: discovery.StorageVersionHash(v1beta1.GroupVersion.Group, v1beta1.GroupVersion.Version, "Gateway"),
-				},
-				{
-					Name:       "gateways/status",
-					Namespaced: false,
-					Kind:       "Gateway",
-					Verbs:      metav1.Verbs{"get", "patch", "update"},
-				},
-			},
-		},
-	}
 }
 
 func resolveLocalHost() string {

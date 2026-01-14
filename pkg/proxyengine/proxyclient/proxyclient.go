@@ -79,13 +79,13 @@ func (c *ProxyClient) Start(ctx context.Context) error {
 	}
 	clientCertManager.Start()
 	defer clientCertManager.Stop()
-	_ = wait.PollUntil(5*time.Second, func() (bool, error) {
+	_ = wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
 		if clientCertManager.Current() != nil {
 			return true, nil
 		}
 		klog.Infof("certificate %s not signed, waiting...", certMgrCfg.CommonName)
 		return false, nil
-	}, ctx.Done())
+	})
 	for addr := range c.servers {
 		tlsCfg, err := certmanager.GenTLSConfigUseCertMgrAndCA(clientCertManager, addr, utils.RavenCAFile)
 		if err != nil {

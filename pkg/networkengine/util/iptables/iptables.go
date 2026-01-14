@@ -1,5 +1,4 @@
 //go:build linux
-// +build linux
 
 /*
  * Copyright 2022 The OpenYurt Authors.
@@ -50,9 +49,9 @@ func New() (IPTablesInterface, error) {
 }
 
 func (ipt *iptablesWrapper) NewChainIfNotExist(table, chain string) error {
-	exists, err := ipt.IPTables.ChainExists(table, chain)
+	exists, err := ipt.ChainExists(table, chain)
 	if err == nil && !exists {
-		err = ipt.IPTables.NewChain(table, chain)
+		err = ipt.NewChain(table, chain)
 	}
 	if err != nil {
 		klog.ErrorS(err, "error on iptables.NewChain", "table", table, "chain", chain, "exists", exists)

@@ -46,8 +46,8 @@ func NewProxies(handler http.Handler, udsFile string) Server {
 
 func (p *proxies) Run(stopCh <-chan struct{}) {
 	go func() {
-		klog.Info("start listen unix %s", p.udsSockFile)
-		defer klog.Info("finish listen unix %s", p.udsSockFile)
+		klog.Infof("start listen unix %s", p.udsSockFile)
+		defer klog.Infof("finish listen unix %s", p.udsSockFile)
 		server := &http.Server{
 			Handler:     p.handler,
 			ReadTimeout: 10 * time.Second,
@@ -56,7 +56,9 @@ func (p *proxies) Run(stopCh <-chan struct{}) {
 		if err != nil {
 			klog.Errorf("proxies failed to listen uds %s", err.Error())
 		}
-		defer listen.Close()
+		defer func() {
+			_ = listen.Close()
+		}()
 
 		go func() {
 			<-stopCh
@@ -88,8 +90,8 @@ func NewMaster(handler http.Handler, tlsCfg *tls.Config, secureAddr, insecureAdd
 
 func (m *master) Run(stopCh <-chan struct{}) {
 	go func() {
-		klog.Info("start handling https request from master at %s", m.secureAddr)
-		defer klog.Info("finish handling https request from master at %s", m.secureAddr)
+		klog.Infof("start handling https request from master at %s", m.secureAddr)
+		defer klog.Infof("finish handling https request from master at %s", m.secureAddr)
 		server := http.Server{
 			Addr:         m.secureAddr,
 			Handler:      m.handler,
@@ -152,8 +154,8 @@ func NewAgent(tlsCfg *tls.Config, proxyServer *anpserver.ProxyServer, address st
 
 func (c *agent) Run(stopCh <-chan struct{}) {
 	go func() {
-		klog.Info("start handling grpc request from proxy client at %s", c.address)
-		defer klog.Info("finish handling grpc request from proxy client at %s", c.address)
+		klog.InfoS("start handling grpc request from proxy client at %s", c.address)
+		defer klog.InfoS("finish handling grpc request from proxy client at %s", c.address)
 		ka := keepalive.ServerParameters{
 			MaxConnectionIdle: 10 * time.Minute,
 			Time:              10 * time.Second,
@@ -166,7 +168,7 @@ func (c *agent) Run(stopCh <-chan struct{}) {
 			klog.Errorf("failed to listen to agent on %s: %s", c.address, err.Error())
 			return
 		}
-		defer listen.Close()
+		defer func() { _ = listen.Close() }()
 		go func() {
 			<-stopCh
 			grpcServer.Stop()
