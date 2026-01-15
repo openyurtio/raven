@@ -32,6 +32,13 @@ const (
 	resetMark = 0x0
 )
 
+// The following variables are exposed for testing only.
+var (
+	linkByName = netlink.LinkByName
+	linkAdd    = netlink.LinkAdd
+	linkDel    = netlink.LinkDel
+)
+
 func ensureVxlanLink(vxlan netlink.Vxlan, vtepIP net.IP) (netlink.Link, error) {
 	vxLink, err := createVxLanLink(&vxlan)
 	if err != nil {
@@ -69,22 +76,22 @@ func ensureVxlanLink(vxlan netlink.Vxlan, vtepIP net.IP) (netlink.Link, error) {
 }
 
 func createVxLanLink(expectedVxLanLink netlink.Link) (netlink.Link, error) {
-	currentVxLanLink, err := netlink.LinkByName(vxlanLinkName)
+	currentVxLanLink, err := linkByName(vxlanLinkName)
 	if err != nil && !isLinkNotFoundError(err) {
 		return nil, fmt.Errorf("failed to get link %s, error: %v", vxlanLinkName, err)
 	}
 
 	if currentVxLanLink != nil && isVxlanConfigChanged(currentVxLanLink, expectedVxLanLink) {
-		if err := netlink.LinkDel(currentVxLanLink); err != nil {
+		if err := linkDel(currentVxLanLink); err != nil {
 			return nil, fmt.Errorf("failed to del old vxlan link, error: %v", err)
 		}
 	}
 
-	if err := netlink.LinkAdd(expectedVxLanLink); err != nil {
+	if err := linkAdd(expectedVxLanLink); err != nil {
 		return nil, fmt.Errorf("failed to add vxlan link, error: %v", err)
 	}
 
-	return netlink.LinkByName(vxlanLinkName)
+	return linkByName(vxlanLinkName)
 }
 
 func isLinkNotFoundError(err error) bool {

@@ -24,8 +24,11 @@ import (
 
 	"github.com/openyurtio/api/raven/v1beta1"
 	"github.com/openyurtio/raven/cmd/agent/app/config"
+	"github.com/openyurtio/raven/pkg/networkengine/routedriver/vxlan"
+	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver/libreswan"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver/wireguard"
+	"github.com/openyurtio/raven/pkg/utils"
 )
 
 const (
@@ -69,6 +72,24 @@ type ProxyOptions struct {
 	ProxyServerCertDir       string
 	ProxyClientCertDir       string
 	InterceptorServerUDSFile string
+}
+
+func NewDefaultOptions() *AgentOptions {
+	return &AgentOptions{
+		TunnelOptions: TunnelOptions{
+			VPNDriver:   libreswan.DriverName,
+			RouteDriver: vxlan.DriverName,
+			VPNPort:     vpndriver.DefaultVPNPort,
+			MACPrefix:   "aa:0f",
+		},
+		ProxyOptions: ProxyOptions{
+			ProxyClientCertDir:       utils.RavenProxyClientCertDir,
+			ProxyServerCertDir:       utils.RavenProxyServerCertDir,
+			InterceptorServerUDSFile: utils.RavenProxyServerUDSFile,
+		},
+		NodeName: os.Getenv("NODE_NAME"),
+		NodeIP:   os.Getenv("NODE_IP"),
+	}
 }
 
 // Validate validates the AgentOptions

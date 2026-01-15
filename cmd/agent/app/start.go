@@ -20,7 +20,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
@@ -34,30 +33,12 @@ import (
 	"github.com/openyurtio/raven/cmd/agent/app/options"
 	ravenengine "github.com/openyurtio/raven/pkg/engine"
 	"github.com/openyurtio/raven/pkg/features"
-	"github.com/openyurtio/raven/pkg/networkengine/routedriver/vxlan"
-	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
-	"github.com/openyurtio/raven/pkg/networkengine/vpndriver/libreswan"
-	"github.com/openyurtio/raven/pkg/utils"
 )
 
 // NewRavenAgentCommand creates a new raven agent command
 
 func NewRavenAgentCommand(ctx context.Context) *cobra.Command {
-	agentOptions := &options.AgentOptions{
-		TunnelOptions: options.TunnelOptions{
-			VPNDriver:   libreswan.DriverName,
-			RouteDriver: vxlan.DriverName,
-			VPNPort:     vpndriver.DefaultVPNPort,
-			MACPrefix:   "aa:0f",
-		},
-		ProxyOptions: options.ProxyOptions{
-			ProxyClientCertDir:       utils.RavenProxyClientCertDir,
-			ProxyServerCertDir:       utils.RavenProxyServerCertDir,
-			InterceptorServerUDSFile: utils.RavenProxyServerUDSFile,
-		},
-		NodeName: os.Getenv("NODE_NAME"),
-		NodeIP:   os.Getenv("NODE_IP"),
-	}
+	agentOptions := options.NewDefaultOptions()
 
 	cmd := &cobra.Command{
 		Short: fmt.Sprintf("Launch %s", "raven-agent"),
