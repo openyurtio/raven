@@ -18,6 +18,7 @@ package app
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"sync"
 	"time"
@@ -25,6 +26,8 @@ import (
 	"github.com/lorenzosaino/go-sysctl"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/cmd/agent/app/options"
@@ -33,8 +36,10 @@ import (
 )
 
 // NewRavenAgentCommand creates a new raven agent command
+
 func NewRavenAgentCommand(ctx context.Context) *cobra.Command {
-	agentOptions := &options.AgentOptions{}
+	agentOptions := options.NewDefaultOptions()
+
 	cmd := &cobra.Command{
 		Short: fmt.Sprintf("Launch %s", "raven-agent"),
 		RunE: func(c *cobra.Command, args []string) error {
@@ -55,6 +60,13 @@ func NewRavenAgentCommand(ctx context.Context) *cobra.Command {
 
 	agentOptions.AddFlags(cmd.Flags())
 	features.DefaultMutableFeatureGate.AddFlag(cmd.Flags())
+
+	opts := zap.Options{
+		Development: true,
+	}
+	opts.BindFlags(flag.CommandLine)
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
 	return cmd
 }
 

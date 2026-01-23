@@ -101,10 +101,14 @@ func (l *libreswan) Init() (err error) {
 		klog.Errorf("fail to create secrets file: %v", err)
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	psk := vpndriver.GetPSK()
-	fmt.Fprintf(file, "%%any %%any : PSK \"%s\"\n", psk)
+	if _, err := fmt.Fprintf(file, "%%any %%any : PSK \"%s\"\n", psk); err != nil {
+		return err
+	}
 
 	return l.runPluto()
 }

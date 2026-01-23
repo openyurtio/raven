@@ -79,13 +79,13 @@ func (c *ProxyClient) Start(ctx context.Context) error {
 	}
 	clientCertManager.Start()
 	defer clientCertManager.Stop()
-	_ = wait.PollUntil(5*time.Second, func() (bool, error) {
+	_ = wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
 		if clientCertManager.Current() != nil {
 			return true, nil
 		}
 		klog.Infof("certificate %s not signed, waiting...", certMgrCfg.CommonName)
 		return false, nil
-	}, ctx.Done())
+	})
 	for addr := range c.servers {
 		tlsCfg, err := certmanager.GenTLSConfigUseCertMgrAndCA(clientCertManager, addr, utils.RavenCAFile)
 		if err != nil {
@@ -104,6 +104,7 @@ func (c *ProxyClient) Start(ctx context.Context) error {
 func (c *ProxyClient) run(stopCh <-chan struct{}) {
 	for addr, cert := range c.servers {
 		client := c.NewClient(addr, cert, stopCh)
+
 		client.Serve()
 		klog.Infof("start serving grpc request redirected from %s", addr)
 	}
@@ -111,14 +112,21 @@ func (c *ProxyClient) run(stopCh <-chan struct{}) {
 
 func (c *ProxyClient) NewClient(dstAddr string, tlsCfg *tls.Config, stopCh <-chan struct{}) *anp.ClientSet {
 	dialOption := grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg))
+
 	cc := &anp.ClientSetConfig{
 		AgentID:                 c.name,
 		Address:                 dstAddr,
 		AgentIdentifiers:        fmt.Sprintf("host=%s", c.name),
 		SyncInterval:            5 * time.Second,
+		SyncIntervalCap:         60 * time.Second,
 		ProbeInterval:           5 * time.Second,
 		DialOptions:             []grpc.DialOption{dialOption},
 		ServiceAccountTokenPath: "",
 	}
-	return cc.NewAgentClientSet(stopCh)
+	cs := cc.NewAgentClientSet(make(<-chan struct{}), stopCh)
+
+	responseCounter := anp.NewResponseBasedCounter(cs)
+	cs.SetServerCounter(responseCounter)
+
+	return cs
 }

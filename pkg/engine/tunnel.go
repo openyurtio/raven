@@ -79,7 +79,7 @@ func (c *TunnelEngine) InitDriver() error {
 }
 
 func (c *TunnelEngine) CleanupDriver() {
-	_ = wait.PollImmediate(time.Second, 5*time.Second, func() (done bool, err error) {
+	_ = wait.PollUntilContextTimeout(context.Background(), time.Second, 5*time.Second, true, func(ctx context.Context) (done bool, err error) {
 		err = c.vpnDriver.Cleanup()
 		if err != nil {
 			klog.Errorf("fail to cleanup vpn driver: %s", err.Error())

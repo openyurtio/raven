@@ -29,8 +29,8 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/httpstream"
+	"k8s.io/apimachinery/pkg/util/httpstream/wsstream"
 	"k8s.io/apiserver/pkg/util/flushwriter"
-	"k8s.io/apiserver/pkg/util/wsstream"
 	"k8s.io/klog/v2"
 
 	"github.com/openyurtio/raven/pkg/utils"
@@ -107,11 +107,11 @@ func NewInterceptor(udsFile string, cfg *tls.Config) http.Handler {
 			defer putBufioReader(br)
 			resp, err := http.ReadResponse(br, nil)
 			if err != nil {
-				conn.Close()
+				_ = conn.Close()
 				return nil, fmt.Errorf("reading HTTP response from CONNECT to %s failed %s", address, err.Error())
 			}
 			if resp.StatusCode != 200 {
-				conn.Close()
+				_ = conn.Close()
 				return nil, fmt.Errorf("proxy err while dialing %s, code %d: %v", address, resp.StatusCode, resp.Status)
 			}
 		default:
@@ -121,7 +121,7 @@ func NewInterceptor(udsFile string, cfg *tls.Config) http.Handler {
 			cfg.InsecureSkipVerify = true
 			tlsConn := tls.Client(conn, cfg)
 			if err := tlsConn.Handshake(); err != nil {
-				conn.Close()
+				_ = conn.Close()
 				return nil, fmt.Errorf("fail to setup TLS handshake to %s: error %s", address, err.Error())
 			}
 			return tlsConn, nil
@@ -141,7 +141,9 @@ func (c *Interceptor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		logAndHTTPError(w, http.StatusServiceUnavailable, "failed to setup the proxy for %s, error %s", r.Host, err)
 		return
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	err = r.Write(conn)
 	if err != nil {
@@ -169,7 +171,9 @@ func serveRequest(conn net.Conn, w http.ResponseWriter, r *http.Request) {
 		logAndHTTPError(w, http.StatusServiceUnavailable, "fail to read response from the conn: %s", err.Error())
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if wsstream.IsWebSocketRequest(r) {
 		wsReader := wsstream.NewReader(resp.Body, true, wsstream.NewDefaultReaderProtocols())
@@ -193,7 +197,7 @@ func serveRequest(conn net.Conn, w http.ResponseWriter, r *http.Request) {
 			case <-ctx.Done():
 				klog.Infof("chunked request(%s) to agent(%s) closed by cloud client, %v", r.URL.String(),
 					r.Header.Get(utils.RavenProxyHostHeaderKey), ctx.Err())
-				conn.Close()
+				_ = conn.Close()
 			}
 		}(r, conn, stopCh)
 		if flusher, ok := w.(http.Flusher); ok {
@@ -228,7 +232,9 @@ func serveUpgradeRequest(conn net.Conn, w http.ResponseWriter, r *http.Request) 
 		logAndHTTPError(w, http.StatusServiceUnavailable, "fail to hijack response: %s", err.Error())
 		return
 	}
-	defer frontend.Close()
+	defer func() {
+		_ = frontend.Close()
+	}()
 
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		deadline := time.Now().Add(10 * time.Second)

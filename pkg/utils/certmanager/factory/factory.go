@@ -158,7 +158,6 @@ func (f *factory) New(cfg *CertManagerConfig) (certificate.Manager, error) {
 		GetTemplate:      getTemplate,
 		Usages:           usages,
 		CertificateStore: f.fileStore,
-		Logf:             klog.Infof,
 	})
 }
 

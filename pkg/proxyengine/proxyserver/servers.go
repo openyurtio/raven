@@ -32,7 +32,7 @@ import (
 )
 
 type Server interface {
-	Run(ctx context.Context)
+	Run(stopCh <-chan struct{})
 }
 
 type proxies struct {
@@ -44,10 +44,10 @@ func NewProxies(handler http.Handler, udsFile string) Server {
 	return &proxies{handler: handler, udsSockFile: udsFile}
 }
 
-func (p *proxies) Run(ctx context.Context) {
-	go func(ctx context.Context) {
-		klog.Info("start listen unix %s", p.udsSockFile)
-		defer klog.Info("finish listen unix %s", p.udsSockFile)
+func (p *proxies) Run(stopCh <-chan struct{}) {
+	go func() {
+		klog.Infof("start listen unix %s", p.udsSockFile)
+		defer klog.Infof("finish listen unix %s", p.udsSockFile)
 		server := &http.Server{
 			Handler:     p.handler,
 			ReadTimeout: 10 * time.Second,
@@ -56,19 +56,25 @@ func (p *proxies) Run(ctx context.Context) {
 		if err != nil {
 			klog.Errorf("proxies failed to listen uds %s", err.Error())
 		}
-		defer listen.Close()
-		go func(ctx context.Context) {
-			<-ctx.Done()
-			err := server.Shutdown(context.TODO())
+		defer func() {
+			_ = listen.Close()
+		}()
+
+		go func() {
+			<-stopCh
+
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			err := server.Shutdown(shutdownCtx)
 			if err != nil {
 				klog.Errorf("failed to shutdown proxies server, error %s", err.Error())
 			}
-		}(ctx)
+
+			cancel()
+		}()
 		if err := server.Serve(listen); err != nil {
 			klog.Errorf("proxies failed to serving request through uds %s", err.Error())
 		}
-
-	}(ctx)
+	}()
 }
 
 type master struct {
@@ -82,10 +88,10 @@ func NewMaster(handler http.Handler, tlsCfg *tls.Config, secureAddr, insecureAdd
 	return &master{handler: handler, tlsCfg: tlsCfg, secureAddr: secureAddr, insecureAddr: insecureAddr}
 }
 
-func (m *master) Run(ctx context.Context) {
-	go func(ctx context.Context) {
-		klog.Info("start handling https request from master at %s", m.secureAddr)
-		defer klog.Info("finish handling https request from master at %s", m.secureAddr)
+func (m *master) Run(stopCh <-chan struct{}) {
+	go func() {
+		klog.Infof("start handling https request from master at %s", m.secureAddr)
+		defer klog.Infof("finish handling https request from master at %s", m.secureAddr)
 		server := http.Server{
 			Addr:         m.secureAddr,
 			Handler:      m.handler,
@@ -93,19 +99,24 @@ func (m *master) Run(ctx context.Context) {
 			TLSConfig:    m.tlsCfg,
 			TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 		}
-		go func(ctx context.Context) {
-			<-ctx.Done()
-			err := server.Shutdown(context.TODO())
+		go func() {
+			<-stopCh
+
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			err := server.Shutdown(shutdownCtx)
 			if err != nil {
 				klog.Errorf("failed to shutdown master secure server, error %s", err.Error())
 			}
-		}(ctx)
+
+			cancel()
+		}()
+
 		if err := server.ListenAndServeTLS("", ""); err != nil {
 			klog.Errorf("failed to serve https request from master: %s", err.Error())
 		}
-	}(ctx)
+	}()
 
-	go func(ctx context.Context) {
+	go func() {
 		klog.Infof("start handling https request from master at %s", m.insecureAddr)
 		defer klog.Infof("finish handling https request from master at %s", m.insecureAddr)
 		server := http.Server{
@@ -114,17 +125,21 @@ func (m *master) Run(ctx context.Context) {
 			ReadTimeout:  10 * time.Second,
 			TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 		}
-		go func(ctx context.Context) {
-			<-ctx.Done()
-			err := server.Shutdown(context.TODO())
+		go func() {
+			<-stopCh
+
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			err := server.Shutdown(shutdownCtx)
 			if err != nil {
 				klog.Errorf("failed to shutdown master insecure server, error %s", err.Error())
 			}
-		}(ctx)
+
+			cancel()
+		}()
 		if err := server.ListenAndServe(); err != nil {
 			klog.Errorf("failed to serve https request from master: %s", err.Error())
 		}
-	}(ctx)
+	}()
 }
 
 type agent struct {
@@ -137,10 +152,10 @@ func NewAgent(tlsCfg *tls.Config, proxyServer *anpserver.ProxyServer, address st
 	return &agent{tlsCfg: tlsCfg, proxyServer: proxyServer, address: address}
 }
 
-func (c *agent) Run(ctx context.Context) {
-	go func(ctx context.Context) {
-		klog.Info("start handling grpc request from proxy client at %s", c.address)
-		defer klog.Info("finish handling grpc request from proxy client at %s", c.address)
+func (c *agent) Run(stopCh <-chan struct{}) {
+	go func() {
+		klog.InfoS("start handling grpc request from proxy client at %s", c.address)
+		defer klog.InfoS("finish handling grpc request from proxy client at %s", c.address)
 		ka := keepalive.ServerParameters{
 			MaxConnectionIdle: 10 * time.Minute,
 			Time:              10 * time.Second,
@@ -153,13 +168,13 @@ func (c *agent) Run(ctx context.Context) {
 			klog.Errorf("failed to listen to agent on %s: %s", c.address, err.Error())
 			return
 		}
-		defer listen.Close()
-		go func(ctx context.Context) {
-			<-ctx.Done()
+		defer func() { _ = listen.Close() }()
+		go func() {
+			<-stopCh
 			grpcServer.Stop()
-		}(ctx)
+		}()
 		if err := grpcServer.Serve(listen); err != nil {
 			klog.Errorf("failed to server grpc request from proxy agent server, error %s", err.Error())
 		}
-	}(ctx)
+	}()
 }

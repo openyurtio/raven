@@ -126,9 +126,9 @@ func EnableCreateEdgeConnection(localEndpoint *types.Endpoint, remoteEndpoint *t
 	if !localEndpoint.UnderNAT || !remoteEndpoint.UnderNAT {
 		return false
 	}
-	return !((localEndpoint.NATType == utils.NATSymmetric && remoteEndpoint.NATType == utils.NATSymmetric) ||
-		(localEndpoint.NATType == utils.NATSymmetric && remoteEndpoint.NATType == utils.NATPortRestricted) ||
-		(localEndpoint.NATType == utils.NATPortRestricted && remoteEndpoint.NATType == utils.NATSymmetric))
+	return (localEndpoint.NATType != utils.NATSymmetric || remoteEndpoint.NATType != utils.NATSymmetric) &&
+		(localEndpoint.NATType != utils.NATSymmetric || remoteEndpoint.NATType != utils.NATPortRestricted) &&
+		(localEndpoint.NATType != utils.NATPortRestricted || remoteEndpoint.NATType != utils.NATSymmetric)
 }
 
 func DefaultMTU() (int, error) {

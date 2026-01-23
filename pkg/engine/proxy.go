@@ -71,13 +71,25 @@ func (p *ProxyEngine) Status() bool {
 }
 
 func (p *ProxyEngine) Handler() error {
-	var err error
 	p.option.SetProxyStatus(p.Status())
 	specServer, specClient := p.getRole(p.option.GetProxyStatus())
-	switch JudgeAction(p.proxyOption.GetServerStatus(), specServer) {
+
+	if err := p.proxyServerHandler(specServer); err != nil {
+		return fmt.Errorf("failed to proxy server handler, error: %v", err)
+	}
+
+	if err := p.proxyClientHandler(specClient); err != nil {
+		return fmt.Errorf("failed to proxy client handler, error: %v", err)
+	}
+
+	return nil
+}
+
+func (p *ProxyEngine) proxyServerHandler(enableServer bool) error {
+	switch JudgeAction(p.proxyOption.GetServerStatus(), enableServer) {
 	case StartType:
 		srcAddr := getSrcAddressForProxyServer(p.client, p.nodeName)
-		err = p.startProxyServer()
+		err := p.startProxyServer()
 		if err != nil {
 			klog.Errorf("failed to start proxy server, error %s", err.Error())
 			return err
@@ -91,40 +103,12 @@ func (p *ProxyEngine) Handler() error {
 		if strings.Join(p.serverLocalEndpoints, ",") != strings.Join(srcAddr, ",") {
 			p.stopProxyServer()
 			time.Sleep(2 * time.Second)
-			err = p.startProxyServer()
+			err := p.startProxyServer()
 			if err != nil {
 				klog.Errorf("failed to start proxy server, error %s", err.Error())
 				return err
 			}
 			p.serverLocalEndpoints = srcAddr
-		}
-	default:
-
-	}
-
-	switch JudgeAction(p.proxyOption.GetClientStatus(), specClient) {
-	case StartType:
-		err = p.startProxyClient()
-		if err != nil {
-			klog.Errorf("failed to start proxy client, error %s", err.Error())
-			return err
-		}
-	case StopType:
-		p.stopProxyClient()
-	case RestartType:
-		dstAddr := getDestAddressForProxyClient(p.client, p.localGateway)
-		if len(dstAddr) < 1 {
-			klog.Infoln("dest address is empty, will not connected it")
-			return nil
-		}
-		if strings.Join(p.clientRemoteEndpoints, ",") != strings.Join(dstAddr, ",") {
-			p.stopProxyClient()
-			time.Sleep(2 * time.Second)
-			err = p.startProxyClient()
-			if err != nil {
-				klog.Errorf("failed to start proxy client, error %s", err.Error())
-				return err
-			}
 		}
 	default:
 
@@ -169,6 +153,36 @@ func (p *ProxyEngine) stopProxyServer() {
 	cancel()
 	p.proxyOption.SetServerStatus(false)
 	p.proxyCtx.ReloadServerContext(p.ctx)
+}
+
+func (p *ProxyEngine) proxyClientHandler(enableClient bool) error {
+	switch JudgeAction(p.proxyOption.GetClientStatus(), enableClient) {
+	case StartType:
+		err := p.startProxyClient()
+		if err != nil {
+			klog.Errorf("failed to start proxy client, error %s", err.Error())
+			return err
+		}
+	case StopType:
+		p.stopProxyClient()
+	case RestartType:
+		dstAddr := getDestAddressForProxyClient(p.client, p.localGateway)
+		if len(dstAddr) < 1 {
+			klog.Infoln("dest address is empty, will not connected it")
+			return nil
+		}
+		if strings.Join(p.clientRemoteEndpoints, ",") != strings.Join(dstAddr, ",") {
+			p.stopProxyClient()
+			time.Sleep(2 * time.Second)
+			err := p.startProxyClient()
+			if err != nil {
+				klog.Errorf("failed to start proxy client, error %s", err.Error())
+				return err
+			}
+		}
+	default:
+	}
+	return nil
 }
 
 func (p *ProxyEngine) startProxyClient() error {
@@ -242,14 +256,21 @@ func getDestAddressForProxyClient(client client.Client, localGateway *v1beta1.Ga
 		if localGateway != nil && localGateway.Name == gw.Name {
 			continue
 		}
-		for _, aep := range gw.Status.ActiveEndpoints {
-			if aep.Type == v1beta1.Proxy && aep.PublicIP != "" {
-				destAddr = append(destAddr, net.JoinHostPort(aep.PublicIP, strconv.Itoa(aep.Port)))
-			}
-		}
+		destAddr = append(destAddr, getDestAddressFromRemoteGateway(localGateway, &gw)...)
 	}
+
 	sort.Slice(destAddr, func(i, j int) bool { return destAddr[i] < destAddr[j] })
 	return destAddr
+}
+
+func getDestAddressFromRemoteGateway(localGateway, remoteGateway *v1beta1.Gateway) []string {
+	var result []string
+	for _, aep := range remoteGateway.Status.ActiveEndpoints {
+		if aep.Type == v1beta1.Proxy && aep.PublicIP != "" {
+			result = append(result, net.JoinHostPort(aep.PublicIP, strconv.Itoa(aep.Port)))
+		}
+	}
+	return result
 }
 
 func (p *ProxyEngine) getRole(enableProxy bool) (enableServer, enableClient bool) {

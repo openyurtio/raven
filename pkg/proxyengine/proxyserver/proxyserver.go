@@ -36,6 +36,7 @@ import (
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 	anpserver "sigs.k8s.io/apiserver-network-proxy/pkg/server"
+	"sigs.k8s.io/apiserver-network-proxy/pkg/server/proxystrategies"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/openyurtio/api/raven"
@@ -145,13 +146,13 @@ func (c *ProxyServer) Start(ctx context.Context) error {
 	}
 	proxyCertMgr.Start()
 
-	_ = wait.PollUntil(5*time.Second, func() (bool, error) {
+	_ = wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
 		if serverCertMgr.Current() != nil && proxyCertMgr.Current() != nil {
 			return true, nil
 		}
 		klog.Infof("certificate %s and %s not signed, waiting...", serverCertCfg.ComponentName, proxyCertCfg.ComponentName)
 		return false, nil
-	}, ctx.Done())
+	})
 
 	klog.Infof("certificate %s and %s ok", serverCertCfg.ComponentName, proxyCertCfg.ComponentName)
 	c.serverTLSConfig, err = certmanager.GenTLSConfigUseCurrentCertAndCertPool(serverCertMgr.Current, c.rootCert, "server")
@@ -172,13 +173,13 @@ func (c *ProxyServer) Start(ctx context.Context) error {
 
 func (c *ProxyServer) runServers(ctx context.Context) error {
 	klog.Info("start proxy server")
-	strategy := []anpserver.ProxyStrategy{anpserver.ProxyStrategyDestHost}
-	proxyServer := anpserver.NewProxyServer(c.nodeName, strategy, 1, &anpserver.AgentTokenAuthenticationOptions{})
-	NewProxies(&anpserver.Tunnel{Server: proxyServer}, c.interceptorUDSFile).Run(ctx)
+	strategy := []proxystrategies.ProxyStrategy{proxystrategies.ProxyStrategyDestHost}
+	proxyServer := anpserver.NewProxyServer(c.nodeName, strategy, 1, &anpserver.AgentTokenAuthenticationOptions{}, 10)
+	NewProxies(&anpserver.Tunnel{Server: proxyServer}, c.interceptorUDSFile).Run(ctx.Done())
 	interceptor := NewInterceptor(c.interceptorUDSFile, c.proxyTLSConfig)
 	headerMgr := NewHeaderManager(c.client, c.gateway.GetName(), utilnet.IsIPv4String(c.nodeIP))
-	NewMaster(headerMgr.Handler(interceptor), c.serverTLSConfig, c.internalSecureAddress, c.internalInsecureAddress).Run(ctx)
-	NewAgent(c.serverTLSConfig, proxyServer, c.exposedAddress).Run(ctx)
+	NewMaster(headerMgr.Handler(interceptor), c.serverTLSConfig, c.internalSecureAddress, c.internalInsecureAddress).Run(ctx.Done())
+	NewAgent(c.serverTLSConfig, proxyServer, c.exposedAddress).Run(ctx.Done())
 	return nil
 }
 
@@ -232,7 +233,7 @@ func (c *ProxyServer) getProxyServerIPsAndDNSName() (dnsName []string, ipAddr []
 			}
 		}
 	}
-	klog.V(3).Info("cert address is %v", ipAddr)
+	klog.V(3).Infof("cert address is %v", ipAddr)
 	return
 }
 
