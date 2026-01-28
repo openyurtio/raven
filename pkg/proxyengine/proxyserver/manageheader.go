@@ -166,6 +166,17 @@ func (h *headerManger) getNormalRequestDestAddress(r *http.Request) (name, ip, p
 		if err != nil {
 			return "", "", "", err
 		}
+		query := r.URL.Query()
+		nodeNameFromQuery := query.Get("nodeName")
+		// If the "nodeName" query parameter exists, priority use it.
+		// This supports metrics collection requests in the format: <RavenIP>:10250?nodeName=<NodeName>
+		if nodeNameFromQuery != "" {
+			nodeName = nodeNameFromQuery
+			// Remove the nodeName query parameter as it's no longer needed
+			query.Del("nodeName")
+			r.URL.RawQuery = query.Encode()
+		}
+		klog.Infof("node name from query: %s , request url: %s", nodeNameFromQuery, r.URL.String())
 	}
 	ipAddress := net.ParseIP(nodeName)
 	if ipAddress != nil {
