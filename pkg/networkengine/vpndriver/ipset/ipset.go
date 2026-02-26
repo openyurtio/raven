@@ -64,48 +64,43 @@ func CalIPSetOnNode(network *types.Network, centralGw *types.Endpoint, nodeName 
 	if err != nil {
 		return set
 	}
-	if IsCentreGatewayRole(centralGw, nodeName) {
-		subnets = append(subnets, network.LocalEndpoint.Subnets...)
-		for _, srcCIDR := range subnets {
-			_, ipNet, err := net.ParseCIDR(srcCIDR)
+	// All gateway nodes need both forward and reverse pairs:
+	// - Forward pairs (local, remote): outgoing traffic from local pods forwarded through
+	//   this gateway to remote pods, must skip Flannel MASQUERADE before VPN encapsulation.
+	// - Reverse pairs (remote, local): incoming VPN-decapsulated traffic forwarded to local
+	//   non-gateway nodes, must skip Flannel MASQUERADE in POSTROUTING.
+	for _, localCIDR := range network.LocalEndpoint.Subnets {
+		_, localIPNet, err := net.ParseCIDR(localCIDR)
+		if err != nil {
+			klog.Errorf("parse node subnet %s error %s", localCIDR, err.Error())
+			continue
+		}
+		localOnes, _ := localIPNet.Mask.Size()
+		for _, remoteCIDR := range subnets {
+			_, remoteIPNet, err := net.ParseCIDR(remoteCIDR)
 			if err != nil {
-				klog.Errorf("parse node subnet %s error %s", srcCIDR, err.Error())
+				klog.Errorf("parse node subnet %s error %s", remoteCIDR, err.Error())
 				continue
 			}
-			ones, _ := ipNet.Mask.Size()
-			entry := &netlink.IPSetEntry{
-				IP:      ipNet.IP,
-				CIDR:    uint8(ones),
-				IP2:     ipNet.IP,
-				CIDR2:   uint8(ones),
+			remoteOnes, _ := remoteIPNet.Mask.Size()
+			// Forward pair: (local, remote)
+			fwd := &netlink.IPSetEntry{
+				IP:      localIPNet.IP,
+				CIDR:    uint8(localOnes),
+				IP2:     remoteIPNet.IP,
+				CIDR2:   uint8(remoteOnes),
 				Replace: true,
 			}
-			set[ipset.Key(entry)] = entry
-		}
-	} else {
-		for _, localCIDR := range network.LocalEndpoint.Subnets {
-			_, localIPNet, err := net.ParseCIDR(localCIDR)
-			if err != nil {
-				klog.Errorf("parse node subnet %s error %s", localCIDR, err.Error())
-				continue
+			set[ipset.Key(fwd)] = fwd
+			// Reverse pair: (remote, local)
+			rev := &netlink.IPSetEntry{
+				IP:      remoteIPNet.IP,
+				CIDR:    uint8(remoteOnes),
+				IP2:     localIPNet.IP,
+				CIDR2:   uint8(localOnes),
+				Replace: true,
 			}
-			localOnes, _ := localIPNet.Mask.Size()
-			for _, remoteCIDR := range subnets {
-				_, remoteIPNet, err := net.ParseCIDR(remoteCIDR)
-				if err != nil {
-					klog.Errorf("parse node subnet %s error %s", remoteCIDR, err.Error())
-					continue
-				}
-				remoteOnes, _ := remoteIPNet.Mask.Size()
-				entry := &netlink.IPSetEntry{
-					IP:      localIPNet.IP,
-					CIDR:    uint8(localOnes),
-					IP2:     remoteIPNet.IP,
-					CIDR2:   uint8(remoteOnes),
-					Replace: true,
-				}
-				set[ipset.Key(entry)] = entry
-			}
+			set[ipset.Key(rev)] = rev
 		}
 	}
 	return set
