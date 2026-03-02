@@ -101,8 +101,9 @@ func NewCertManagerFactoryWithFnAndStore(clientsetFn certificate.ClientsetFunc, 
 
 func (f *factory) New(cfg *CertManagerConfig) (certificate.Manager, error) {
 	var err error
-	if IsNil(f.fileStore) {
-		f.fileStore, err = store.NewFileStoreWrapper(cfg.ComponentName, cfg.CertDir, cfg.CertDir, "", "")
+	fileStore := f.fileStore
+	if IsNil(fileStore) {
+		fileStore, err = store.NewFileStoreWrapper(cfg.ComponentName, cfg.CertDir, cfg.CertDir, "", "")
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize the server certificate store: %w", err)
 		}
@@ -157,7 +158,7 @@ func (f *factory) New(cfg *CertManagerConfig) (certificate.Manager, error) {
 		SignerName:       cfg.SignerName,
 		GetTemplate:      getTemplate,
 		Usages:           usages,
-		CertificateStore: f.fileStore,
+		CertificateStore: fileStore,
 	})
 }
 
