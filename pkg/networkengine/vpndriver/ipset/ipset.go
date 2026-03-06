@@ -50,25 +50,23 @@ func IsCentreGatewayRole(centralGw *types.Endpoint, localNodeName types.NodeName
 
 func CalIPSetOnNode(network *types.Network, centralGw *types.Endpoint, nodeName types.NodeName, ipset ipsetutil.IPSetInterface) map[string]*netlink.IPSetEntry {
 	set := make(map[string]*netlink.IPSetEntry)
-	subnets := make([]string, 0)
+	remoteSubnets := make([]string, 0)
 	for _, v := range network.RemoteNodeInfo {
 		nodeInfo := network.RemoteNodeInfo[types.NodeName(v.NodeName)]
 		if nodeInfo == nil {
 			klog.Errorf("node %s not found in RemoteNodeInfo", v.NodeName)
 			continue
 		}
-		subnets = append(subnets, nodeInfo.Subnets...)
+		remoteSubnets = append(remoteSubnets, nodeInfo.Subnets...)
 	}
 	var err error
-	subnets, err = cidrman.MergeCIDRs(subnets)
+	mergedRemoteSubnets, err := cidrman.MergeCIDRs(remoteSubnets)
 	if err != nil {
 		return set
 	}
-	// All gateway nodes need both forward and reverse pairs:
-	// - Forward pairs (local, remote): outgoing traffic from local pods forwarded through
-	//   this gateway to remote pods, must skip Flannel MASQUERADE before VPN encapsulation.
-	// - Reverse pairs (remote, local): incoming VPN-decapsulated traffic forwarded to local
-	//   non-gateway nodes, must skip Flannel MASQUERADE in POSTROUTING.
+	// All gateway nodes need bidirectional (local, remote) pairs to skip SNAT:
+	// - Forward (local, remote): outgoing traffic from local pods to remote pods.
+	// - Reverse (remote, local): incoming VPN-decapsulated traffic to local pods.
 	for _, localCIDR := range network.LocalEndpoint.Subnets {
 		_, localIPNet, err := net.ParseCIDR(localCIDR)
 		if err != nil {
@@ -76,14 +74,13 @@ func CalIPSetOnNode(network *types.Network, centralGw *types.Endpoint, nodeName 
 			continue
 		}
 		localOnes, _ := localIPNet.Mask.Size()
-		for _, remoteCIDR := range subnets {
+		for _, remoteCIDR := range mergedRemoteSubnets {
 			_, remoteIPNet, err := net.ParseCIDR(remoteCIDR)
 			if err != nil {
 				klog.Errorf("parse node subnet %s error %s", remoteCIDR, err.Error())
 				continue
 			}
 			remoteOnes, _ := remoteIPNet.Mask.Size()
-			// Forward pair: (local, remote)
 			fwd := &netlink.IPSetEntry{
 				IP:      localIPNet.IP,
 				CIDR:    uint8(localOnes),
@@ -92,7 +89,6 @@ func CalIPSetOnNode(network *types.Network, centralGw *types.Endpoint, nodeName 
 				Replace: true,
 			}
 			set[ipset.Key(fwd)] = fwd
-			// Reverse pair: (remote, local)
 			rev := &netlink.IPSetEntry{
 				IP:      remoteIPNet.IP,
 				CIDR:    uint8(remoteOnes),
@@ -101,6 +97,43 @@ func CalIPSetOnNode(network *types.Network, centralGw *types.Endpoint, nodeName 
 				Replace: true,
 			}
 			set[ipset.Key(rev)] = rev
+		}
+	}
+	// Central gateway additionally needs bidirectional (remoteA, remoteB) pairs,
+	// because cross-region traffic between non-central gateways transits through
+	// the central gateway and must also skip Flannel MASQUERADE.
+	if IsCentreGatewayRole(centralGw, nodeName) {
+		for i := 0; i < len(remoteSubnets); i++ {
+			_, ipNetA, err := net.ParseCIDR(remoteSubnets[i])
+			if err != nil {
+				klog.Errorf("parse node subnet %s error %s", remoteSubnets[i], err.Error())
+				continue
+			}
+			onesA, _ := ipNetA.Mask.Size()
+			for j := i + 1; j < len(remoteSubnets); j++ {
+				_, ipNetB, err := net.ParseCIDR(remoteSubnets[j])
+				if err != nil {
+					klog.Errorf("parse node subnet %s error %s", remoteSubnets[j], err.Error())
+					continue
+				}
+				onesB, _ := ipNetB.Mask.Size()
+				fwd := &netlink.IPSetEntry{
+					IP:      ipNetA.IP,
+					CIDR:    uint8(onesA),
+					IP2:     ipNetB.IP,
+					CIDR2:   uint8(onesB),
+					Replace: true,
+				}
+				set[ipset.Key(fwd)] = fwd
+				rev := &netlink.IPSetEntry{
+					IP:      ipNetB.IP,
+					CIDR:    uint8(onesB),
+					IP2:     ipNetA.IP,
+					CIDR2:   uint8(onesA),
+					Replace: true,
+				}
+				set[ipset.Key(rev)] = rev
+			}
 		}
 	}
 	return set
