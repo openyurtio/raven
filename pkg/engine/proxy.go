@@ -129,6 +129,7 @@ func (p *ProxyEngine) startProxyServer() error {
 		InternalSecureAddress:   p.config.Proxy.InternalSecureAddress,
 		InternalInsecureAddress: p.config.Proxy.InternalInsecureAddress,
 		ExposedAddress:          p.config.Proxy.ExternalAddress,
+		EnableMetricsProxyPorts: p.config.Proxy.EnableMetricsProxyPorts,
 	}
 	ctx := p.proxyCtx.GetServerContext()
 	ps, err := proxyserver.NewProxyServer(pe, p.client, p.config.Manager.GetConfig(), p.localGateway.DeepCopy())

@@ -72,6 +72,7 @@ type ProxyOptions struct {
 	ProxyServerCertDir       string
 	ProxyClientCertDir       string
 	InterceptorServerUDSFile string
+	EnableMetricsProxyPorts  bool
 }
 
 func NewDefaultOptions() *AgentOptions {
@@ -150,6 +151,7 @@ func (o *AgentOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.ProxyServerCertDir, "server-cert-dir", o.ProxyServerCertDir, "The directory of certificate stored at.")
 	fs.StringVar(&o.ProxyServerCertDNSNames, "server-cert-dns-names", o.ProxyServerCertDNSNames, "DNS names that will be added into server's certificate. (e.g., dns1,dns2)")
 	fs.StringVar(&o.ProxyServerCertIPs, "server-cert-ips", o.ProxyServerCertIPs, "IPs that will be added into server's certificate. (e.g., ip1,ip2)")
+	fs.BoolVar(&o.EnableMetricsProxyPorts, "enable-metrics-proxy-ports", o.EnableMetricsProxyPorts, "Enable dedicated proxy ports for metrics collection (10290->9445, 10291->9100, 10292->10250).")
 }
 
 // Config return a raven agent config objective
@@ -198,6 +200,7 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 		ProxyClientCertDir:       o.ProxyClientCertDir,
 		ProxyServerCertDir:       o.ProxyServerCertDir,
 		InterceptorServerUDSFile: o.InterceptorServerUDSFile,
+		EnableMetricsProxyPorts:  o.EnableMetricsProxyPorts,
 	}
 
 	c.Proxy.InternalInsecureAddress = resolveAddress(c.Proxy.InternalInsecureAddress, c.NodeIP, strconv.Itoa(v1beta1.DefaultProxyServerInsecurePort))

@@ -30,4 +30,5 @@ type EnginConfig struct {
 	ExposedAddress          string
 	InternalInsecureAddress string
 	InternalSecureAddress   string
+	EnableMetricsProxyPorts bool
 }

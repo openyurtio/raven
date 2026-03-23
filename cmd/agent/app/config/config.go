@@ -60,6 +60,7 @@ type ProxyConfig struct {
 	ProxyServerCertIPs       string
 	ProxyServerCertDir       string
 	InterceptorServerUDSFile string
+	EnableMetricsProxyPorts  bool
 }
 
 type completedConfig struct {
