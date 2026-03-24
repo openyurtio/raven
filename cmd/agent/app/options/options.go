@@ -63,15 +63,16 @@ type TunnelOptions struct {
 }
 
 type ProxyOptions struct {
-	ProxyMetricsAddress      string
-	InternalInsecureAddress  string
-	InternalSecureAddress    string
-	ExternalAddress          string
-	ProxyServerCertDNSNames  string
-	ProxyServerCertIPs       string
-	ProxyServerCertDir       string
-	ProxyClientCertDir       string
-	InterceptorServerUDSFile string
+	ProxyMetricsAddress          string
+	InternalInsecureAddress      string
+	InternalSecureAddress        string
+	ExternalAddress              string
+	ProxyServerCertDNSNames      string
+	ProxyServerCertIPs           string
+	ProxyServerCertDir           string
+	ProxyClientCertDir           string
+	InterceptorServerUDSFile     string
+	EnableManagedPrometheusProxy bool
 }
 
 func NewDefaultOptions() *AgentOptions {
@@ -150,6 +151,7 @@ func (o *AgentOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.ProxyServerCertDir, "server-cert-dir", o.ProxyServerCertDir, "The directory of certificate stored at.")
 	fs.StringVar(&o.ProxyServerCertDNSNames, "server-cert-dns-names", o.ProxyServerCertDNSNames, "DNS names that will be added into server's certificate. (e.g., dns1,dns2)")
 	fs.StringVar(&o.ProxyServerCertIPs, "server-cert-ips", o.ProxyServerCertIPs, "IPs that will be added into server's certificate. (e.g., ip1,ip2)")
+	fs.BoolVar(&o.EnableManagedPrometheusProxy, "enable-managed-prometheus-proxy", o.EnableManagedPrometheusProxy, "Enable dedicated proxy ports for managed Prometheus metrics collection (10290->9445, 10291->9100, 10292->10250).")
 }
 
 // Config return a raven agent config objective
@@ -193,11 +195,12 @@ func (o *AgentOptions) Config() (*config.Config, error) {
 		InternalSecureAddress:   o.InternalSecureAddress,
 		ExternalAddress:         o.ExternalAddress,
 
-		ProxyServerCertDNSNames:  o.ProxyServerCertDNSNames,
-		ProxyServerCertIPs:       o.ProxyServerCertIPs,
-		ProxyClientCertDir:       o.ProxyClientCertDir,
-		ProxyServerCertDir:       o.ProxyServerCertDir,
-		InterceptorServerUDSFile: o.InterceptorServerUDSFile,
+		ProxyServerCertDNSNames:      o.ProxyServerCertDNSNames,
+		ProxyServerCertIPs:           o.ProxyServerCertIPs,
+		ProxyClientCertDir:           o.ProxyClientCertDir,
+		ProxyServerCertDir:           o.ProxyServerCertDir,
+		InterceptorServerUDSFile:     o.InterceptorServerUDSFile,
+		EnableManagedPrometheusProxy: o.EnableManagedPrometheusProxy,
 	}
 
 	c.Proxy.InternalInsecureAddress = resolveAddress(c.Proxy.InternalInsecureAddress, c.NodeIP, strconv.Itoa(v1beta1.DefaultProxyServerInsecurePort))

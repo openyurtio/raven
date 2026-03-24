@@ -62,6 +62,7 @@ spec:
           - --proxy-internal-secure-addr={{.Values.proxy.internalSecureAddr}}
           - --proxy-internal-insecure-addr={{.Values.proxy.internalInsecureAddr}}
           - --proxy-external-addr={{.Values.proxy.externalAddr}}
+          - --enable-managed-prometheus-proxy={{.Values.proxy.enableManagedPrometheusProxy}}
         volumeMounts:
         - name: raven-dir
           mountPath: /var/lib/raven

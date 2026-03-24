@@ -48,22 +48,23 @@ import (
 )
 
 type ProxyServer struct {
-	nodeName                string
-	nodeIP                  string
-	metaAddress             string
-	exposedAddress          string
-	internalInsecureAddress string
-	internalSecureAddress   string
-	certDir                 string
-	interceptorUDSFile      string
-	certDNSNames            []string
-	gateway                 *v1beta1.Gateway
-	certIPs                 []net.IP
-	clientSet               kubernetes.Interface
-	client                  client.Client
-	rootCert                *x509.CertPool
-	serverTLSConfig         *tls.Config
-	proxyTLSConfig          *tls.Config
+	nodeName                     string
+	nodeIP                       string
+	metaAddress                  string
+	exposedAddress               string
+	internalInsecureAddress      string
+	internalSecureAddress        string
+	certDir                      string
+	interceptorUDSFile           string
+	certDNSNames                 []string
+	gateway                      *v1beta1.Gateway
+	certIPs                      []net.IP
+	clientSet                    kubernetes.Interface
+	client                       client.Client
+	rootCert                     *x509.CertPool
+	serverTLSConfig              *tls.Config
+	proxyTLSConfig               *tls.Config
+	enableManagedPrometheusProxy bool
 }
 
 func NewProxyServer(cfg *proxyengine.EnginConfig, client client.Client, kubeCfg *rest.Config, gw *v1beta1.Gateway) (*ProxyServer, error) {
@@ -84,18 +85,19 @@ func NewProxyServer(cfg *proxyengine.EnginConfig, client client.Client, kubeCfg 
 		}
 	}
 	server := &ProxyServer{
-		nodeName:                cfg.Name,
-		gateway:                 gw,
-		nodeIP:                  cfg.IP,
-		metaAddress:             cfg.MetaAddress,
-		internalInsecureAddress: cfg.InternalInsecureAddress,
-		internalSecureAddress:   cfg.InternalSecureAddress,
-		exposedAddress:          cfg.ExposedAddress,
-		interceptorUDSFile:      cfg.InterceptorUDSFile,
-		certDir:                 cfg.CertDir,
-		certDNSNames:            certDNSNames,
-		certIPs:                 certIPs,
-		client:                  client,
+		nodeName:                     cfg.Name,
+		gateway:                      gw,
+		nodeIP:                       cfg.IP,
+		metaAddress:                  cfg.MetaAddress,
+		internalInsecureAddress:      cfg.InternalInsecureAddress,
+		internalSecureAddress:        cfg.InternalSecureAddress,
+		exposedAddress:               cfg.ExposedAddress,
+		interceptorUDSFile:           cfg.InterceptorUDSFile,
+		certDir:                      cfg.CertDir,
+		certDNSNames:                 certDNSNames,
+		certIPs:                      certIPs,
+		client:                       client,
+		enableManagedPrometheusProxy: cfg.EnableManagedPrometheusProxy,
 	}
 	var err error
 	server.clientSet, err = kubernetes.NewForConfig(kubeCfg)
@@ -178,8 +180,15 @@ func (c *ProxyServer) runServers(ctx context.Context) error {
 	NewProxies(&anpserver.Tunnel{Server: proxyServer}, c.interceptorUDSFile).Run(ctx.Done())
 	interceptor := NewInterceptor(c.interceptorUDSFile, c.proxyTLSConfig)
 	headerMgr := NewHeaderManager(c.client, c.gateway.GetName(), utilnet.IsIPv4String(c.nodeIP))
-	NewMaster(headerMgr.Handler(interceptor), c.serverTLSConfig, c.internalSecureAddress, c.internalInsecureAddress).Run(ctx.Done())
+	handlerChain := headerMgr.Handler(interceptor)
+	NewMaster(handlerChain, c.serverTLSConfig, c.internalSecureAddress, c.internalInsecureAddress).Run(ctx.Done())
 	NewAgent(c.serverTLSConfig, proxyServer, c.exposedAddress).Run(ctx.Done())
+
+	// Adapt managed-prometheus-agent metrics collect scenario.
+	// Because it could not access raven service by ClusterIP and could only access by pod-ip:container-port.
+	if c.enableManagedPrometheusProxy {
+		startMetricsProxyServers(c.nodeIP, c.serverTLSConfig, handlerChain, ctx.Done())
+	}
 	return nil
 }
 
