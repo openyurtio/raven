@@ -118,18 +118,18 @@ func (p *ProxyEngine) startProxyServer() error {
 		return fmt.Errorf("unknown gateway for node %s, can not start proxy server", p.nodeName)
 	}
 	pe := &proxyengine.EnginConfig{
-		Name:                    p.nodeName,
-		IP:                      p.nodeIP,
-		GatewayName:             p.localGateway.Name,
-		CertDir:                 p.config.Proxy.ProxyServerCertDir,
-		MetaAddress:             p.config.Proxy.ProxyMetricsAddress,
-		CertIPs:                 p.config.Proxy.ProxyServerCertIPs,
-		CertDNSNames:            p.config.Proxy.ProxyServerCertDNSNames,
-		InterceptorUDSFile:      p.config.Proxy.InterceptorServerUDSFile,
-		InternalSecureAddress:   p.config.Proxy.InternalSecureAddress,
-		InternalInsecureAddress: p.config.Proxy.InternalInsecureAddress,
-		ExposedAddress:          p.config.Proxy.ExternalAddress,
-		EnableMetricsProxyPorts: p.config.Proxy.EnableMetricsProxyPorts,
+		Name:                         p.nodeName,
+		IP:                           p.nodeIP,
+		GatewayName:                  p.localGateway.Name,
+		CertDir:                      p.config.Proxy.ProxyServerCertDir,
+		MetaAddress:                  p.config.Proxy.ProxyMetricsAddress,
+		CertIPs:                      p.config.Proxy.ProxyServerCertIPs,
+		CertDNSNames:                 p.config.Proxy.ProxyServerCertDNSNames,
+		InterceptorUDSFile:           p.config.Proxy.InterceptorServerUDSFile,
+		InternalSecureAddress:        p.config.Proxy.InternalSecureAddress,
+		InternalInsecureAddress:      p.config.Proxy.InternalInsecureAddress,
+		ExposedAddress:               p.config.Proxy.ExternalAddress,
+		EnableManagedPrometheusProxy: p.config.Proxy.EnableManagedPrometheusProxy,
 	}
 	ctx := p.proxyCtx.GetServerContext()
 	ps, err := proxyserver.NewProxyServer(pe, p.client, p.config.Manager.GetConfig(), p.localGateway.DeepCopy())

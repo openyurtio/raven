@@ -87,7 +87,7 @@ proxy:
   internalInsecureAddr: ":10264"
   internalSecureAddr: ":10263"
   metricsBindAddr: ":10266"
-  enableMetricsProxyPorts: false
+  enableManagedPrometheusProxy: false
 
 rollingUpdate:
   maxUnavailable: 20%

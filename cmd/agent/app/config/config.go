@@ -53,14 +53,14 @@ type ProxyConfig struct {
 	ProxyMetricsAddress string
 	ProxyClientCertDir  string
 
-	InternalInsecureAddress  string
-	InternalSecureAddress    string
-	ExternalAddress          string
-	ProxyServerCertDNSNames  string
-	ProxyServerCertIPs       string
-	ProxyServerCertDir       string
-	InterceptorServerUDSFile string
-	EnableMetricsProxyPorts  bool
+	InternalInsecureAddress      string
+	InternalSecureAddress        string
+	ExternalAddress              string
+	ProxyServerCertDNSNames      string
+	ProxyServerCertIPs           string
+	ProxyServerCertDir           string
+	InterceptorServerUDSFile     string
+	EnableManagedPrometheusProxy bool
 }
 
 type completedConfig struct {

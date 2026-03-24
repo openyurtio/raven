@@ -23,12 +23,12 @@ type EnginConfig struct {
 	MetaAddress string
 
 	//proxy server
-	GatewayName             string
-	CertDNSNames            string
-	CertIPs                 string
-	InterceptorUDSFile      string
-	ExposedAddress          string
-	InternalInsecureAddress string
-	InternalSecureAddress   string
-	EnableMetricsProxyPorts bool
+	GatewayName                  string
+	CertDNSNames                 string
+	CertIPs                      string
+	InterceptorUDSFile           string
+	ExposedAddress               string
+	InternalInsecureAddress      string
+	InternalSecureAddress        string
+	EnableManagedPrometheusProxy bool
 }
