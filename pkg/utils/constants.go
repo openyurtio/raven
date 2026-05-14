@@ -32,7 +32,7 @@ const (
 
 	RavenProxyServerCertDir = "/var/lib/raven/proxy.server/pki"
 	RavenProxyClientCertDir = "/var/lib/raven/proxy.client/pki"
-	RavenProxyServerUDSFile = "/tmp/interceptor-proxier.sock"
+	RavenProxyServerUDSFile = "/var/lib/raven/interceptor-proxier.sock"
 
 	DefaultLoopBackIP4                   = "127.0.0.1"
 	DefaultLoopBackIP6                   = "::1"
