@@ -163,9 +163,14 @@ func (p *ProxyEngine) proxyClientHandler(enableClient bool) error {
 	case StopType:
 		p.stopProxyClient()
 	case RestartType:
-		dstAddr := getDestAddressForProxyClient(p.client, p.localGateway)
+		dstAddr := getDestAddressForProxyClient(p.client, p.localGateway, p.nodeName)
 		if len(dstAddr) < 1 {
-			klog.Infoln("dest address is empty, will not connected it")
+			// Remote dial targets disappeared (e.g. localGateway was previously nil
+			// during bootstrap and the client was started against a now-filtered set).
+			// Stop the existing client so its stale connections do not leak.
+			klog.Infoln("dest address is empty, stop existing proxy client")
+			p.stopProxyClient()
+			p.clientRemoteEndpoints = nil
 			return nil
 		}
 		if strings.Join(p.clientRemoteEndpoints, ",") != strings.Join(dstAddr, ",") {
@@ -185,7 +190,7 @@ func (p *ProxyEngine) proxyClientHandler(enableClient bool) error {
 func (p *ProxyEngine) startProxyClient() error {
 	klog.Infoln("start raven l7 proxy client")
 	var err error
-	dstAddr := getDestAddressForProxyClient(p.client, p.localGateway)
+	dstAddr := getDestAddressForProxyClient(p.client, p.localGateway, p.nodeName)
 	if len(dstAddr) < 1 {
 		klog.Infoln("dest address is empty, will not connected it")
 		return nil
@@ -239,7 +244,7 @@ func getSrcAddressForProxyServer(client client.Client, nodeName string) []string
 	return srcAddr
 }
 
-func getDestAddressForProxyClient(client client.Client, localGateway *v1beta1.Gateway) []string {
+func getDestAddressForProxyClient(client client.Client, localGateway *v1beta1.Gateway, nodeName string) []string {
 	destAddr := make([]string, 0)
 	var gwList v1beta1.GatewayList
 	err := client.List(context.TODO(), &gwList)
@@ -253,11 +258,31 @@ func getDestAddressForProxyClient(client client.Client, localGateway *v1beta1.Ga
 		if localGateway != nil && localGateway.Name == gw.Name {
 			continue
 		}
+		// Defensive filter: even when localGateway has not been resolved yet
+		// (Status.Nodes for this node not yet reconciled by controller-manager),
+		// avoid dialing a Gateway that already lists this node in its Status.Nodes.
+		// This prevents the proxy client from hairpinning to its own Gateway's
+		// public VIP during the bootstrap window.
+		if localGateway == nil && gatewayContainsNode(&gw, nodeName) {
+			continue
+		}
 		destAddr = append(destAddr, getDestAddressFromRemoteGateway(localGateway, &gw)...)
 	}
 
 	sort.Slice(destAddr, func(i, j int) bool { return destAddr[i] < destAddr[j] })
 	return destAddr
+}
+
+func gatewayContainsNode(gw *v1beta1.Gateway, nodeName string) bool {
+	if gw == nil || nodeName == "" {
+		return false
+	}
+	for _, n := range gw.Status.Nodes {
+		if n.NodeName == nodeName {
+			return true
+		}
+	}
+	return false
 }
 
 func getDestAddressFromRemoteGateway(localGateway, remoteGateway *v1beta1.Gateway) []string {
