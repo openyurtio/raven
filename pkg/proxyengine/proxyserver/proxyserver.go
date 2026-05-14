@@ -199,6 +199,22 @@ func (c *ProxyServer) getProxyServerIPsAndDNSName() (dnsName []string, ipAddr []
 	ipAddr = append(ipAddr, c.certIPs...)
 	dnsName = append(dnsName, c.nodeName)
 
+	// Include publicIPs of this Gateway's proxy ActiveEndpoints. They are the
+	// addresses remote proxy clients dial (see getDestAddressFromRemoteGateway).
+	// Service-derived LB ingress is not enough: ExposeType=PublicIP creates no
+	// LoadBalancer Service at all, and ExposeType=LoadBalancer can race between
+	// Gateway.Status and Service.Status reconcilers.
+	if c.gateway != nil {
+		for _, aep := range c.gateway.Status.ActiveEndpoints {
+			if aep == nil || aep.Type != v1beta1.Proxy || aep.PublicIP == "" {
+				continue
+			}
+			if ip := net.ParseIP(aep.PublicIP); ip != nil {
+				ipAddr = append(ipAddr, ip)
+			}
+		}
+	}
+
 	var svc v1.Service
 	err := c.client.Get(context.TODO(), types.NamespacedName{Namespace: utils.WorkingNamespace, Name: utils.GatewayProxyInternalService}, &svc)
 	if err != nil {
