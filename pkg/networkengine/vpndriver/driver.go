@@ -22,11 +22,9 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/vishvananda/netlink"
 	"k8s.io/klog/v2"
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
-	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
 	"github.com/openyurtio/raven/pkg/types"
 	"github.com/openyurtio/raven/pkg/utils"
 )
@@ -129,28 +127,6 @@ func EnableCreateEdgeConnection(localEndpoint *types.Endpoint, remoteEndpoint *t
 	return (localEndpoint.NATType != utils.NATSymmetric || remoteEndpoint.NATType != utils.NATSymmetric) &&
 		(localEndpoint.NATType != utils.NATSymmetric || remoteEndpoint.NATType != utils.NATPortRestricted) &&
 		(localEndpoint.NATType != utils.NATPortRestricted || remoteEndpoint.NATType != utils.NATSymmetric)
-}
-
-func DefaultMTU() (int, error) {
-	routes, err := netlinkutil.RouteListFiltered(
-		netlink.FAMILY_V4,
-		&netlink.Route{Dst: nil},
-		netlink.RT_FILTER_DST)
-	if err != nil {
-		return 0, err
-	}
-
-	if len(routes) > 1 {
-		klog.Warning("more than one default route found")
-	}
-
-	for _, route := range routes {
-		if defaultLink, err := netlink.LinkByIndex(route.LinkIndex); err == nil {
-			klog.InfoS("find default link", "name", defaultLink.Attrs().Name)
-			return defaultLink.Attrs().MTU, nil
-		}
-	}
-	return 0, fmt.Errorf("error get default mtu")
 }
 
 func GetPSK() string {
