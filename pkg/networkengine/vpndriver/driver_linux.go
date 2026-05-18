@@ -23,12 +23,10 @@ import (
 
 	"github.com/vishvananda/netlink"
 	"k8s.io/klog/v2"
-
-	netlinkutil "github.com/openyurtio/raven/pkg/networkengine/util/netlink"
 )
 
 func DefaultMTU() (int, error) {
-	routes, err := netlinkutil.RouteListFiltered(
+	routes, err := netlink.RouteListFiltered(
 		netlink.FAMILY_V4,
 		&netlink.Route{Dst: nil},
 		netlink.RT_FILTER_DST)
