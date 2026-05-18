@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,8 @@ import (
 	"github.com/openyurtio/raven/pkg/proxyengine"
 	"github.com/openyurtio/raven/pkg/proxyengine/proxyclient"
 	"github.com/openyurtio/raven/pkg/proxyengine/proxyserver"
+	"github.com/openyurtio/raven/pkg/utils"
+	"github.com/openyurtio/raven/pkg/utils/certmanager/store"
 )
 
 type ActionType string
@@ -44,7 +47,7 @@ func JudgeAction(curr, spec bool) ActionType {
 type ProxyEngine struct {
 	nodeName              string
 	nodeIP                string
-	serverLocalEndpoints  []string
+	serverPublicIPs       []string
 	clientRemoteEndpoints []string
 	localGateway          *v1beta1.Gateway
 	config                *config.Config
@@ -84,32 +87,74 @@ func (p *ProxyEngine) Handler() error {
 func (p *ProxyEngine) proxyServerHandler(enableServer bool) error {
 	switch JudgeAction(p.proxyOption.GetServerStatus(), enableServer) {
 	case StartType:
-		srcAddr := getSrcAddressForProxyServer(p.client, p.nodeName)
-		err := p.startProxyServer()
-		if err != nil {
+		if err := p.startProxyServer(); err != nil {
 			klog.Errorf("failed to start proxy server, error %s", err.Error())
 			return err
 		}
-		p.serverLocalEndpoints = srcAddr
+		p.serverPublicIPs = collectGatewayProxyPublicIPs(p.localGateway)
 	case StopType:
 		p.stopProxyServer()
-		p.serverLocalEndpoints = []string{}
+		p.purgeServerCert()
+		p.serverPublicIPs = nil
 	case RestartType:
-		srcAddr := getSrcAddressForProxyServer(p.client, p.nodeName)
-		if strings.Join(p.serverLocalEndpoints, ",") != strings.Join(srcAddr, ",") {
-			p.stopProxyServer()
-			time.Sleep(2 * time.Second)
-			err := p.startProxyServer()
-			if err != nil {
-				klog.Errorf("failed to start proxy server, error %s", err.Error())
-				return err
-			}
-			p.serverLocalEndpoints = srcAddr
+		curr := collectGatewayProxyPublicIPs(p.localGateway)
+		if reflect.DeepEqual(curr, p.serverPublicIPs) {
+			return nil
 		}
+		klog.Infof("proxy server gateway public IPs changed: %v -> %v, restarting", p.serverPublicIPs, curr)
+		p.stopProxyServer()
+		p.purgeServerCert()
+		time.Sleep(2 * time.Second)
+		if err := p.startProxyServer(); err != nil {
+			klog.Errorf("failed to start proxy server, error %s", err.Error())
+			return err
+		}
+		p.serverPublicIPs = curr
 	default:
 
 	}
 	return nil
+}
+
+// collectGatewayProxyPublicIPs returns the deduplicated, sorted set of
+// PublicIPs from gw.Status.ActiveEndpoints whose Type==Proxy and PublicIP
+// is non-empty. It mirrors the Gateway-side filter used by the proxy
+// server cert SAN computation in pkg/proxyengine/proxyserver, so that the
+// restart trigger and the cert SAN draw from the same source set.
+func collectGatewayProxyPublicIPs(gw *v1beta1.Gateway) []string {
+	if gw == nil {
+		return nil
+	}
+	set := make(map[string]struct{})
+	for _, aep := range gw.Status.ActiveEndpoints {
+		if aep == nil || aep.Type != v1beta1.Proxy || aep.PublicIP == "" {
+			continue
+		}
+		set[aep.PublicIP] = struct{}{}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for ip := range set {
+		out = append(out, ip)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// purgeServerCert removes the proxy server cert/key files from the
+// configured cert directory so that the next certificate.Manager load
+// sees a missing certificate and triggers a fresh CSR with the current
+// SAN. Failures are logged and ignored: the cert manager dynamicTemplate
+// path remains a fallback.
+func (p *ProxyEngine) purgeServerCert() {
+	if p.config == nil || p.config.Proxy == nil {
+		return
+	}
+	if err := store.PurgeCert(p.config.Proxy.ProxyServerCertDir, utils.RavenProxyServerName); err != nil {
+		klog.Warningf("failed to purge proxy server cert (will rely on cert manager rotation): %v", err)
+	}
 }
 
 func (p *ProxyEngine) startProxyServer() error {
@@ -223,26 +268,6 @@ func (p *ProxyEngine) stopProxyClient() {
 	p.proxyOption.SetClientStatus(false)
 	p.proxyCtx.ReloadClientContext(p.ctx)
 }
-func getSrcAddressForProxyServer(client client.Client, nodeName string) []string {
-	srcAddr := make([]string, 0)
-	var gwList v1beta1.GatewayList
-	err := client.List(context.TODO(), &gwList)
-	if err != nil {
-		return srcAddr
-	}
-	for _, gw := range gwList.Items {
-		if gw.Spec.ExposeType == "" {
-			continue
-		}
-		for _, aep := range gw.Status.ActiveEndpoints {
-			if aep.NodeName == nodeName && aep.Type == v1beta1.Proxy {
-				srcAddr = append(srcAddr, aep.PublicIP)
-			}
-		}
-	}
-	return srcAddr
-}
-
 func getDestAddressForProxyClient(client client.Client, localGateway *v1beta1.Gateway, nodeName string) []string {
 	destAddr := make([]string, 0)
 	var gwList v1beta1.GatewayList
