@@ -177,8 +177,9 @@ func (c *ProxyServer) runServers(ctx context.Context) error {
 	proxyServer := anpserver.NewProxyServer(c.nodeName, strategy, 1, &anpserver.AgentTokenAuthenticationOptions{}, 10)
 	NewProxies(&anpserver.Tunnel{Server: proxyServer}, c.interceptorUDSFile).Run(ctx.Done())
 	interceptor := NewInterceptor(c.interceptorUDSFile, c.proxyTLSConfig)
-	headerMgr := NewHeaderManager(c.client, c.gateway.GetName(), utilnet.IsIPv4String(c.nodeIP))
-	NewMaster(headerMgr.Handler(interceptor), c.serverTLSConfig, c.internalSecureAddress, c.internalInsecureAddress).Run(ctx.Done())
+	headerMgr := NewHeaderManager(c.client, c.clientSet, c.gateway.GetName(), utilnet.IsIPv4String(c.nodeIP))
+	handlerChain := headerMgr.Handler(interceptor)
+	NewMaster(handlerChain, c.serverTLSConfig, c.internalSecureAddress, c.internalInsecureAddress).Run(ctx.Done())
 	NewAgent(c.serverTLSConfig, proxyServer, c.exposedAddress).Run(ctx.Done())
 	return nil
 }
