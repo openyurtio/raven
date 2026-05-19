@@ -28,7 +28,9 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -52,13 +54,19 @@ type WrapperHandler interface {
 
 type headerManger struct {
 	client      client.Client
+	clientset   kubernetes.Interface
 	gatewayName string
 	isIPv4      bool
 }
 
-func NewHeaderManager(client client.Client, gatewayName string, isIPv4 bool) WrapperHandler {
+// NewHeaderManager builds a header manager that serves Gateway lookups via the
+// cached controller-runtime client and per-request Node/Pod lookups via the
+// uncached kubernetes clientset, so the cache layer never starts cluster-scoped
+// list/watch on those collections.
+func NewHeaderManager(c client.Client, clientset kubernetes.Interface, gatewayName string, isIPv4 bool) WrapperHandler {
 	return &headerManger{
-		client:      client,
+		client:      c,
+		clientset:   clientset,
 		gatewayName: gatewayName,
 		isIPv4:      isIPv4,
 	}
@@ -129,8 +137,7 @@ func (h *headerManger) getAPIServerRequestDestAddress(r *http.Request) (name, ip
 	nodeName := r.Header.Get(utils.RavenProxyHostHeaderKey)
 	if nodeName == "" {
 		parts := strings.Split(r.URL.Path, "/")
-		var pod v1.Pod
-		err = h.client.Get(context.TODO(), client.ObjectKey{Namespace: parts[2], Name: parts[3]}, &pod)
+		pod, err := h.clientset.CoreV1().Pods(parts[2]).Get(context.TODO(), parts[3], metav1.GetOptions{})
 		if err != nil {
 			return "", "", "", err
 		}
@@ -138,16 +145,15 @@ func (h *headerManger) getAPIServerRequestDestAddress(r *http.Request) (name, ip
 			nodeName = pod.Spec.NodeName
 		}
 	}
-	var node v1.Node
-	err = h.client.Get(context.TODO(), client.ObjectKey{Name: nodeName}, &node)
+	node, err := h.clientset.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
 	if err != nil {
 		return "", "", "", err
 	}
-	name, err = h.getGatewayNodeName(&node)
+	name, err = h.getGatewayNodeName(node)
 	if err != nil {
 		return "", "", "", fmt.Errorf("can not find gateway node for node %s, error %s", node.Name, err.Error())
 	}
-	ip = getNodeIP(&node)
+	ip = getNodeIP(node)
 	if ip == "" {
 		return "", "", "", fmt.Errorf("node %s ip is empty", node.Name)
 	}
@@ -183,16 +189,15 @@ func (h *headerManger) getNormalRequestDestAddress(r *http.Request) (name, ip, p
 		klog.Warningf("raven proxy server not support dest address %s and request.URL is %s", ipAddress, r.URL.String())
 		return "", "", "", nil
 	}
-	var node v1.Node
-	err = h.client.Get(context.TODO(), client.ObjectKey{Name: nodeName}, &node)
+	node, err := h.clientset.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
 	if err != nil {
 		return "", "", "", err
 	}
-	name, err = h.getGatewayNodeName(&node)
+	name, err = h.getGatewayNodeName(node)
 	if err != nil {
 		return "", "", "", fmt.Errorf("can not find gateway node for node %s, error %s", node.Name, err.Error())
 	}
-	ip = getNodeIP(&node)
+	ip = getNodeIP(node)
 	if ip == "" {
 		return "", "", "", fmt.Errorf("node %s ip is empty", node.Name)
 	}
