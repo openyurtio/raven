@@ -39,6 +39,16 @@ func containsIP(list []net.IP, want string) bool {
 	return false
 }
 
+// containsDNS checks whether the given list contains an exact DNS name match.
+func containsDNS(list []string, want string) bool {
+	for _, d := range list {
+		if d == want {
+			return true
+		}
+	}
+	return false
+}
+
 func newGatewayWithEndpoints(name string, eps []*v1beta1.Endpoint) *v1beta1.Gateway {
 	return &v1beta1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -118,6 +128,84 @@ func TestGetProxyServerIPs_NilGatewaySafe(t *testing.T) {
 	_, ips := ps.getProxyServerIPsAndDNSName()
 	if !containsIP(ips, "10.0.0.1") {
 		t.Errorf("expected nodeIP 10.0.0.1 still present even with nil gateway, got %v", ips)
+	}
+}
+
+// TestGetProxyServerIPs_GatewayProxyPublicIPDomainIncluded pins the contract:
+// when Gateway publicIP is configured as a domain (the field accepts either
+// IP or hostname), the domain must appear in the cert SAN dnsName list, not
+// in ipAddr. Remote proxy clients dial whatever PublicIP holds, so the cert
+// must validate against that same hostname.
+func TestGetProxyServerIPs_GatewayProxyPublicIPDomainIncluded(t *testing.T) {
+	gw := newGatewayWithEndpoints("gw-cloud", []*v1beta1.Endpoint{
+		{NodeName: "node-a", Type: v1beta1.Proxy, PublicIP: "raven.example.com", Port: 10262},
+	})
+	ps := &ProxyServer{
+		nodeName: "node-a",
+		nodeIP:   "10.0.0.1",
+		gateway:  gw,
+		client:   NewFakeClient(),
+	}
+
+	dns, ips := ps.getProxyServerIPsAndDNSName()
+
+	if !containsDNS(dns, "raven.example.com") {
+		t.Errorf("expected domain publicIP raven.example.com in SAN dnsName list, got %v", dns)
+	}
+	for _, ip := range ips {
+		if ip == nil {
+			t.Error("nil net.IP entry leaked into SAN ipAddr list (domain misrouted)")
+		}
+	}
+}
+
+// TestGetProxyServerIPs_MixedIPAndDomainPublicIPs covers a real-world setup
+// where one Gateway endpoint is reachable by IP and another by domain. Both
+// must land in the cert SAN — IP in ipAddr, domain in dnsName.
+func TestGetProxyServerIPs_MixedIPAndDomainPublicIPs(t *testing.T) {
+	gw := newGatewayWithEndpoints("gw-cloud", []*v1beta1.Endpoint{
+		{NodeName: "node-a", Type: v1beta1.Proxy, PublicIP: "1.2.3.4", Port: 10262},
+		{NodeName: "node-b", Type: v1beta1.Proxy, PublicIP: "raven.example.com", Port: 10262},
+	})
+	ps := &ProxyServer{
+		nodeName: "node-a",
+		nodeIP:   "10.0.0.1",
+		gateway:  gw,
+		client:   NewFakeClient(),
+	}
+
+	dns, ips := ps.getProxyServerIPsAndDNSName()
+
+	if !containsIP(ips, "1.2.3.4") {
+		t.Errorf("expected IP publicIP 1.2.3.4 in SAN ipAddr list, got %v", ips)
+	}
+	if !containsDNS(dns, "raven.example.com") {
+		t.Errorf("expected domain publicIP raven.example.com in SAN dnsName list, got %v", dns)
+	}
+}
+
+// TestGetProxyServerIPs_TunnelEndpointDomainSkipped: the existing IP test
+// covers tunnel-IP exclusion; extend the contract so a tunnel-typed *domain*
+// PublicIP is likewise not added to the proxy server cert dnsName.
+func TestGetProxyServerIPs_TunnelEndpointDomainSkipped(t *testing.T) {
+	gw := newGatewayWithEndpoints("gw-cloud", []*v1beta1.Endpoint{
+		{NodeName: "node-a", Type: v1beta1.Tunnel, PublicIP: "tunnel.example.com", Port: 4500},
+		{NodeName: "node-a", Type: v1beta1.Proxy, PublicIP: "proxy.example.com", Port: 10262},
+	})
+	ps := &ProxyServer{
+		nodeName: "node-a",
+		nodeIP:   "10.0.0.1",
+		gateway:  gw,
+		client:   NewFakeClient(),
+	}
+
+	dns, _ := ps.getProxyServerIPsAndDNSName()
+
+	if containsDNS(dns, "tunnel.example.com") {
+		t.Errorf("tunnel endpoint domain must not appear in proxy server cert dnsName, got %v", dns)
+	}
+	if !containsDNS(dns, "proxy.example.com") {
+		t.Errorf("proxy endpoint domain must appear in cert dnsName, got %v", dns)
 	}
 }
 

@@ -29,6 +29,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/client-go/kubernetes"
@@ -120,7 +121,11 @@ func (c *ProxyServer) Start(ctx context.Context) error {
 			_, ips := c.getProxyServerIPsAndDNSName()
 			return ips, nil
 		},
-		DNSNames:       append(c.certDNSNames, dnsNames...),
+		DNSNames: append(c.certDNSNames, dnsNames...),
+		DNSGetter: func() ([]string, error) {
+			names, _ := c.getProxyServerIPsAndDNSName()
+			return names, nil
+		},
 		ComponentName:  utils.RavenProxyServerName,
 		CertDir:        c.certDir,
 		SignerName:     certificatesv1.KubeletServingSignerName,
@@ -204,6 +209,10 @@ func (c *ProxyServer) getProxyServerIPsAndDNSName() (dnsName []string, ipAddr []
 	// Service-derived LB ingress is not enough: ExposeType=PublicIP creates no
 	// LoadBalancer Service at all, and ExposeType=LoadBalancer can race between
 	// Gateway.Status and Service.Status reconcilers.
+	//
+	// PublicIP is a free-form string: it may hold a literal IP or a hostname.
+	// Route each value to the matching SAN bucket so TLS verifies against
+	// whichever form the remote client dials.
 	if c.gateway != nil {
 		for _, aep := range c.gateway.Status.ActiveEndpoints {
 			if aep == nil || aep.Type != v1beta1.Proxy || aep.PublicIP == "" {
@@ -211,6 +220,10 @@ func (c *ProxyServer) getProxyServerIPsAndDNSName() (dnsName []string, ipAddr []
 			}
 			if ip := net.ParseIP(aep.PublicIP); ip != nil {
 				ipAddr = append(ipAddr, ip)
+				continue
+			}
+			if errs := validation.IsDNS1123Subdomain(aep.PublicIP); len(errs) == 0 {
+				dnsName = append(dnsName, aep.PublicIP)
 			}
 		}
 	}
