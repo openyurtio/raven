@@ -9,6 +9,8 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
+	clientsetfake "k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -17,11 +19,20 @@ import (
 	"github.com/openyurtio/raven/pkg/utils"
 )
 
+// NewFakeClient builds a controller-runtime fake client used only for
+// resources still served via the cached client (Gateway).
 func NewFakeClient(objs ...runtime.Object) client.Client {
 	scheme := runtime.NewScheme()
 	_ = v1.AddToScheme(scheme)
 	_ = v1beta1.AddToScheme(scheme)
 	return fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
+}
+
+// newFakeClientset seeds a fake kubernetes.Interface with the given core/v1
+// objects. Node and Pod lookups in headerManger now go through this clientset
+// instead of the cache-backed controller-runtime client.
+func newFakeClientset(objs ...runtime.Object) kubernetes.Interface {
+	return clientsetfake.NewSimpleClientset(objs...)
 }
 
 var node1 = &v1.Node{
@@ -135,7 +146,8 @@ var gw = &v1beta1.Gateway{
 
 func Test_GetGatewayNodeName(t *testing.T) {
 	hm := &headerManger{
-		client:      NewFakeClient(node1, node2, gw),
+		client:      NewFakeClient(gw),
+		clientset:   newFakeClientset(node1, node2),
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}
@@ -155,7 +167,8 @@ func Test_GetGatewayNodeName_NoGatewayLabel(t *testing.T) {
 		},
 	}
 	hm := &headerManger{
-		client:      NewFakeClient(nodeWithoutLabel),
+		client:      NewFakeClient(),
+		clientset:   newFakeClientset(nodeWithoutLabel),
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}
@@ -178,7 +191,8 @@ func Test_GetGatewayNodeName_GatewayNotFound(t *testing.T) {
 		},
 	}
 	hm := &headerManger{
-		client:      NewFakeClient(nodeWithNonExistentGw),
+		client:      NewFakeClient(),
+		clientset:   newFakeClientset(nodeWithNonExistentGw),
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}
@@ -209,7 +223,8 @@ func Test_GetGatewayNodeName_NoActiveEndpoints(t *testing.T) {
 		},
 	}
 	hm := &headerManger{
-		client:      NewFakeClient(nodeWithGw, gwNoEndpoints),
+		client:      NewFakeClient(gwNoEndpoints),
+		clientset:   newFakeClientset(nodeWithGw),
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}
@@ -344,7 +359,8 @@ func Test_getNodeIP(t *testing.T) {
 
 func Test_getProxyMode(t *testing.T) {
 	hm := &headerManger{
-		client:      NewFakeClient(node1, node2, gw),
+		client:      NewFakeClient(gw),
+		clientset:   newFakeClientset(node1, node2),
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}
@@ -394,6 +410,7 @@ func Test_getProxyMode(t *testing.T) {
 func Test_getProxyMode_GatewayNotFound(t *testing.T) {
 	hm := &headerManger{
 		client:      NewFakeClient(),
+		clientset:   newFakeClientset(),
 		gatewayName: "gw-nonexistent",
 		isIPv4:      true,
 	}
@@ -405,7 +422,8 @@ func Test_getProxyMode_GatewayNotFound(t *testing.T) {
 
 func Test_getNormalRequestDestAddress(t *testing.T) {
 	hm := &headerManger{
-		client:      NewFakeClient(node1, node2, node3, gw),
+		client:      NewFakeClient(gw),
+		clientset:   newFakeClientset(node1, node2, node3),
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}
@@ -509,7 +527,8 @@ func Test_getNormalRequestDestAddress(t *testing.T) {
 
 func Test_getNormalRequestDestAddress_IPAddress(t *testing.T) {
 	hm := &headerManger{
-		client:      NewFakeClient(node1, gw),
+		client:      NewFakeClient(gw),
+		clientset:   newFakeClientset(node1),
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}
@@ -527,7 +546,8 @@ func Test_getNormalRequestDestAddress_IPAddress(t *testing.T) {
 
 func Test_getAPIServerRequestDestAddress(t *testing.T) {
 	hm := &headerManger{
-		client:      NewFakeClient(node1, node2, pod1, gw),
+		client:      NewFakeClient(gw),
+		clientset:   newFakeClientset(node1, node2, pod1),
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}
@@ -608,8 +628,7 @@ func Test_getAPIServerRequestDestAddress(t *testing.T) {
 }
 
 func Test_NewHeaderManager(t *testing.T) {
-	client := NewFakeClient()
-	hm := NewHeaderManager(client, "test-gateway", true)
+	hm := NewHeaderManager(NewFakeClient(), newFakeClientset(), "test-gateway", true)
 	if hm == nil {
 		t.Errorf("NewHeaderManager returned nil")
 	}
@@ -617,7 +636,8 @@ func Test_NewHeaderManager(t *testing.T) {
 
 func Test_Handler_NilRequest(t *testing.T) {
 	hm := &headerManger{
-		client:      NewFakeClient(node1, gw),
+		client:      NewFakeClient(gw),
+		clientset:   newFakeClientset(node1),
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}
@@ -632,7 +652,8 @@ func Test_Handler_NilRequest(t *testing.T) {
 
 func Test_Handler_InvalidHost(t *testing.T) {
 	hm := &headerManger{
-		client:      NewFakeClient(node1, gw),
+		client:      NewFakeClient(gw),
+		clientset:   newFakeClientset(node1),
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}
@@ -652,7 +673,8 @@ func Test_Handler_InvalidHost(t *testing.T) {
 
 func Test_Handler_NormalRequest_Success(t *testing.T) {
 	hm := &headerManger{
-		client:      NewFakeClient(node1, gw),
+		client:      NewFakeClient(gw),
+		clientset:   newFakeClientset(node1),
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}
@@ -684,7 +706,8 @@ func Test_Handler_NormalRequest_Success(t *testing.T) {
 
 func Test_Handler_APIServerRequest_Success(t *testing.T) {
 	hm := &headerManger{
-		client:      NewFakeClient(node1, pod1, gw),
+		client:      NewFakeClient(gw),
+		clientset:   newFakeClientset(node1, pod1),
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}
@@ -714,6 +737,7 @@ func Test_Handler_APIServerRequest_Success(t *testing.T) {
 func Test_Handler_NodeNotFound(t *testing.T) {
 	hm := &headerManger{
 		client:      NewFakeClient(gw),
+		clientset:   newFakeClientset(),
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}

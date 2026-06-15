@@ -177,8 +177,9 @@ func (c *ProxyServer) runServers(ctx context.Context) error {
 	proxyServer := anpserver.NewProxyServer(c.nodeName, strategy, 1, &anpserver.AgentTokenAuthenticationOptions{}, 10)
 	NewProxies(&anpserver.Tunnel{Server: proxyServer}, c.interceptorUDSFile).Run(ctx.Done())
 	interceptor := NewInterceptor(c.interceptorUDSFile, c.proxyTLSConfig)
-	headerMgr := NewHeaderManager(c.client, c.gateway.GetName(), utilnet.IsIPv4String(c.nodeIP))
-	NewMaster(headerMgr.Handler(interceptor), c.serverTLSConfig, c.internalSecureAddress, c.internalInsecureAddress).Run(ctx.Done())
+	headerMgr := NewHeaderManager(c.client, c.clientSet, c.gateway.GetName(), utilnet.IsIPv4String(c.nodeIP))
+	handlerChain := headerMgr.Handler(interceptor)
+	NewMaster(handlerChain, c.serverTLSConfig, c.internalSecureAddress, c.internalInsecureAddress).Run(ctx.Done())
 	NewAgent(c.serverTLSConfig, proxyServer, c.exposedAddress).Run(ctx.Done())
 	return nil
 }
@@ -189,6 +190,22 @@ func (c *ProxyServer) getProxyServerIPsAndDNSName() (dnsName []string, ipAddr []
 	ipAddr = append(ipAddr, net.ParseIP(utils.DefaultLoopBackIP4))
 	ipAddr = append(ipAddr, c.certIPs...)
 	dnsName = append(dnsName, c.nodeName)
+
+	// Include publicIPs of this Gateway's proxy ActiveEndpoints. They are the
+	// addresses remote proxy clients dial (see getDestAddressFromRemoteGateway).
+	// Service-derived LB ingress is not enough: ExposeType=PublicIP creates no
+	// LoadBalancer Service at all, and ExposeType=LoadBalancer can race between
+	// Gateway.Status and Service.Status reconcilers.
+	if c.gateway != nil {
+		for _, aep := range c.gateway.Status.ActiveEndpoints {
+			if aep == nil || aep.Type != v1beta1.Proxy || aep.PublicIP == "" {
+				continue
+			}
+			if ip := net.ParseIP(aep.PublicIP); ip != nil {
+				ipAddr = append(ipAddr, ip)
+			}
+		}
+	}
 
 	var svc v1.Service
 	err := c.client.Get(context.TODO(), types.NamespacedName{Namespace: utils.WorkingNamespace, Name: utils.GatewayProxyInternalService}, &svc)
