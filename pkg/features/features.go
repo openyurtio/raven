@@ -41,11 +41,17 @@ const (
 	// alpha: v0.3.1
 	// Setting on openyurt and raven-agent side.
 	RavenL7Proxy featuregate.Feature = "RavenL7Proxy"
+
+	// RavenShortestPath enables distributed route path decision, cost evaluation, and shortest path selection.
+	//
+	// alpha: v0.4.0
+	RavenShortestPath featuregate.Feature = "RavenShortestPath"
 )
 
 // defaultRavenFeatureGates consists of all known Kubernetes-specific and raven feature keys.
 // To add a new feature, define a key for it above and add it here. The features will be
 // available throughout raven binaries.
 var defaultRavenFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
-	RavenL7Proxy: {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
+	RavenL7Proxy:      {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
+	RavenShortestPath: {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
 }

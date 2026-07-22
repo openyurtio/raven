@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/EvilSuperstars/go-cidrman"
-	v1 "k8s.io/api/core/v1"
+	"k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -34,7 +34,9 @@ import (
 	"github.com/openyurtio/api/raven"
 	"github.com/openyurtio/api/raven/v1beta1"
 	"github.com/openyurtio/raven/cmd/agent/app/config"
+	"github.com/openyurtio/raven/pkg/features"
 	"github.com/openyurtio/raven/pkg/networkengine/routedriver"
+	"github.com/openyurtio/raven/pkg/networkengine/routing"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
 	"github.com/openyurtio/raven/pkg/types"
 	"github.com/openyurtio/raven/pkg/utils"
@@ -114,9 +116,7 @@ func (c *TunnelEngine) Status() bool {
 
 // sync syncs full state according to the gateway list.
 func (c *TunnelEngine) Handler() error {
-	shouldRun := c.Status()
-
-	if !shouldRun {
+	if !c.Status() {
 		if c.driverInitialized {
 			klog.Infoln("L3 tunnel disabled, cleaning up drivers")
 			if c.CleanupDriver() {
@@ -152,6 +152,7 @@ func (c *TunnelEngine) Handler() error {
 		RemoteEndpoints: make(map[types.GatewayName]*types.Endpoint),
 		LocalNodeInfo:   make(map[types.NodeName]*v1beta1.NodeInfo),
 		RemoteNodeInfo:  make(map[types.NodeName]*v1beta1.NodeInfo),
+		RouteTable:      make(map[types.GatewayName]types.RouteEntry),
 	}
 	c.nodeInfos = make(map[types.NodeName]*v1beta1.NodeInfo)
 
@@ -185,6 +186,23 @@ func (c *TunnelEngine) Handler() error {
 		}
 		c.syncGateway(gw)
 	}
+
+	if features.DefaultFeatureGate.Enabled(features.RavenShortestPath) && c.network.LocalEndpoint != nil {
+		gwNames := make([]types.GatewayName, 0, len(c.network.RemoteEndpoints)+1)
+		if c.network.LocalEndpoint != nil {
+			gwNames = append(gwNames, c.network.LocalEndpoint.GatewayName)
+		}
+		for gwName := range c.network.RemoteEndpoints {
+			gwNames = append(gwNames, gwName)
+		}
+		c.network.RouteTable = routing.ComputeShortestPaths(
+			c.network.LocalEndpoint.GatewayName,
+			c.network.RemoteEndpoints,
+			c.evaluateLinkCosts(gwNames),
+		)
+		klog.InfoS("computed shortest paths", "routeTable", c.network.RouteTable)
+	}
+
 	nw := c.network.Copy()
 	klog.InfoS("applying network", "localEndpoint", nw.LocalEndpoint, "remoteEndpoint", nw.RemoteEndpoints)
 	err = c.vpnDriver.Apply(nw, c.routeDriver.MTU)
@@ -198,6 +216,38 @@ func (c *TunnelEngine) Handler() error {
 		return err
 	}
 	return nil
+}
+
+func (c *TunnelEngine) evaluateLinkCosts(gwNames []types.GatewayName) map[types.GatewayName]map[types.GatewayName]int {
+	linkCosts := make(map[types.GatewayName]map[types.GatewayName]int)
+	prober := routing.NewICMPProber()
+
+	for _, sourceGw := range gwNames {
+		linkCosts[sourceGw] = make(map[types.GatewayName]int, len(gwNames)-1)
+		for _, destGw := range gwNames {
+			if sourceGw != destGw {
+				cost := 10 // default cost if unreachable
+
+				// For now, only evaluate cost from local endpoint to remote endpoints.
+				// (Full mesh latency would require a distributed routing protocol exchange,
+				// which is out of scope for Phase 2. We mock peer-to-peer costs as 10).
+				if c.network.LocalEndpoint != nil && sourceGw == c.network.LocalEndpoint.GatewayName {
+					remoteEP, ok := c.network.RemoteEndpoints[destGw]
+					if ok && remoteEP.PrivateIP != "" {
+						probedCost, err := prober.ProbeCost(remoteEP.PrivateIP)
+						if err == nil {
+							cost = probedCost
+						} else {
+							klog.V(4).Infof("failed to probe cost to %s (using default 10): %v", destGw, err)
+						}
+					}
+				}
+
+				linkCosts[sourceGw][destGw] = cost
+			}
+		}
+	}
+	return linkCosts
 }
 
 func (c *TunnelEngine) syncNodeInfo(nodes []v1beta1.NodeInfo) {
