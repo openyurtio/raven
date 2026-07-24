@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-ping/ping"
+	"github.com/prometheus-community/pro-bing"
 )
 
 // LatencyProber is an interface for measuring network latency to a given IP address.
@@ -31,7 +31,7 @@ func (p *ICMPProber) ProbeCost(targetIP string) (int, error) {
 	if targetIP == "" {
 		return 0, fmt.Errorf("target IP is empty")
 	}
-	pinger, err := ping.NewPinger(targetIP)
+	pinger, err := probing.NewPinger(targetIP)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create pinger: %w", err)
 	}
