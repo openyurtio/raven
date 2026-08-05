@@ -136,9 +136,9 @@ func (r *proxyContexts) GetServerCancelFunc() context.CancelFunc {
 	return r.serverCancel
 }
 
-func findCentreGateway(client client.Client) *v1beta1.Gateway {
+func findCentreGateway(ctx context.Context, client client.Client) *v1beta1.Gateway {
 	var gwList v1beta1.GatewayList
-	err := client.List(context.TODO(), &gwList)
+	err := client.List(ctx, &gwList)
 	if err != nil {
 		return nil
 	}

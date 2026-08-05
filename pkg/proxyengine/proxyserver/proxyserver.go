@@ -110,12 +110,12 @@ func NewProxyServer(cfg *proxyengine.EnginConfig, client client.Client, kubeCfg 
 }
 
 func (c *ProxyServer) Start(ctx context.Context) error {
-	dnsNames, IPs := c.getProxyServerIPsAndDNSName()
+	dnsNames, IPs := c.getProxyServerIPsAndDNSName(ctx)
 	certFactory := factory.NewCertManagerFactory(c.clientSet)
 	serverCertCfg := &factory.CertManagerConfig{
 		IPs: append(c.certIPs, IPs...),
 		IPGetter: func() ([]net.IP, error) {
-			_, ips := c.getProxyServerIPsAndDNSName()
+			_, ips := c.getProxyServerIPsAndDNSName(ctx)
 			return ips, nil
 		},
 		DNSNames:       append(c.certDNSNames, dnsNames...),
@@ -184,7 +184,7 @@ func (c *ProxyServer) runServers(ctx context.Context) error {
 	return nil
 }
 
-func (c *ProxyServer) getProxyServerIPsAndDNSName() (dnsName []string, ipAddr []net.IP) {
+func (c *ProxyServer) getProxyServerIPsAndDNSName(ctx context.Context) (dnsName []string, ipAddr []net.IP) {
 
 	ipAddr = append(ipAddr, net.ParseIP(c.nodeIP))
 	ipAddr = append(ipAddr, net.ParseIP(utils.DefaultLoopBackIP4))
@@ -208,7 +208,7 @@ func (c *ProxyServer) getProxyServerIPsAndDNSName() (dnsName []string, ipAddr []
 	}
 
 	var svc v1.Service
-	err := c.client.Get(context.TODO(), types.NamespacedName{Namespace: utils.WorkingNamespace, Name: utils.GatewayProxyInternalService}, &svc)
+	err := c.client.Get(ctx, types.NamespacedName{Namespace: utils.WorkingNamespace, Name: utils.GatewayProxyInternalService}, &svc)
 	if err != nil {
 		klog.Errorf("failed to get internal service %s/%s to get proxy server IPs and DNSNames, error %s",
 			svc.GetNamespace(), svc.GetName(), err.Error())
@@ -219,7 +219,7 @@ func (c *ProxyServer) getProxyServerIPsAndDNSName() (dnsName []string, ipAddr []
 		ipAddr = append(ipAddr, net.ParseIP(svc.Spec.ClusterIP))
 	}
 	var svcList v1.ServiceList
-	err = c.client.List(context.TODO(), &svcList, &client.ListOptions{
+	err = c.client.List(ctx, &svcList, &client.ListOptions{
 		LabelSelector: labels.Set{
 			raven.LabelCurrentGateway:          c.gateway.GetName(),
 			utils.LabelCurrentGatewayType:      v1beta1.Proxy,

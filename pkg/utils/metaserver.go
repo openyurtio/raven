@@ -20,6 +20,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/pprof"
+	"time"
 
 	"k8s.io/klog/v2"
 
@@ -42,7 +43,9 @@ func RunMetaServer(ctx context.Context, addr string) {
 		}
 		go func(ctx context.Context) {
 			<-ctx.Done()
-			err := metaServer.Shutdown(context.TODO())
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			err := metaServer.Shutdown(shutdownCtx)
 			if err != nil {
 				klog.Errorf("failed to shutdown meta server, error %s", err.Error())
 			}

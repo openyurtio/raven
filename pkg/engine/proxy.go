@@ -61,7 +61,7 @@ type ProxyEngine struct {
 func (p *ProxyEngine) Status() bool {
 	gw := p.localGateway
 	if gw == nil {
-		gw = findCentreGateway(p.client)
+		gw = findCentreGateway(p.ctx, p.client)
 	}
 	if gw == nil {
 		return false
@@ -207,7 +207,7 @@ func (p *ProxyEngine) proxyClientHandler(enableClient bool) error {
 	case StopType:
 		p.stopProxyClient()
 	case RestartType:
-		dstAddr := getDestAddressForProxyClient(p.client, p.localGateway, p.nodeName)
+		dstAddr := getDestAddressForProxyClient(p.ctx, p.client, p.localGateway, p.nodeName)
 		if len(dstAddr) < 1 {
 			// Remote dial targets disappeared (e.g. localGateway was previously nil
 			// during bootstrap and the client was started against a now-filtered set).
@@ -234,7 +234,7 @@ func (p *ProxyEngine) proxyClientHandler(enableClient bool) error {
 func (p *ProxyEngine) startProxyClient() error {
 	klog.Infoln("start raven l7 proxy client")
 	var err error
-	dstAddr := getDestAddressForProxyClient(p.client, p.localGateway, p.nodeName)
+	dstAddr := getDestAddressForProxyClient(p.ctx, p.client, p.localGateway, p.nodeName)
 	if len(dstAddr) < 1 {
 		klog.Infoln("dest address is empty, will not connected it")
 		return nil
@@ -268,10 +268,10 @@ func (p *ProxyEngine) stopProxyClient() {
 	p.proxyOption.SetClientStatus(false)
 	p.proxyCtx.ReloadClientContext(p.ctx)
 }
-func getDestAddressForProxyClient(client client.Client, localGateway *v1beta1.Gateway, nodeName string) []string {
+func getDestAddressForProxyClient(ctx context.Context, client client.Client, localGateway *v1beta1.Gateway, nodeName string) []string {
 	destAddr := make([]string, 0)
 	var gwList v1beta1.GatewayList
-	err := client.List(context.TODO(), &gwList)
+	err := client.List(ctx, &gwList)
 	if err != nil {
 		return destAddr
 	}

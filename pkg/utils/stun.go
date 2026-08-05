@@ -64,8 +64,12 @@ func GetPublicPort() (int, error) {
 		stunClient.SetServerAddr(api)
 		_, host, err := stunClient.Discover()
 		if err == nil {
-			PublicPort = int(host.Port())
-			return PublicPort, nil
+			if host != nil {
+				PublicPort = int(host.Port())
+				return PublicPort, nil
+			}
+			errList = errList.Append(fmt.Errorf("stun client discovered nil host from api %s", api))
+			continue
 		}
 		errList = errList.Append(err)
 	}

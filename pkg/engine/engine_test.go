@@ -151,7 +151,7 @@ func newTestTunnelEngine(gw *v1beta1.Gateway) (*TunnelEngine, *mockVPNDriver, *m
 
 func TestHandler_NoGateway_NoInit(t *testing.T) {
 	te, vpn, route := newTestTunnelEngine(nil)
-	err := te.Handler()
+	err := te.Handler(context.TODO())
 	if err != nil {
 		t.Fatalf("Handler() returned error: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestHandler_NoGateway_NoInit(t *testing.T) {
 
 func TestHandler_ReplicasZero_NoInit(t *testing.T) {
 	te, vpn, route := newTestTunnelEngine(newTestGateway("gw", 0, 0))
-	err := te.Handler()
+	err := te.Handler(context.TODO())
 	if err != nil {
 		t.Fatalf("Handler() returned error: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestHandler_ReplicasZero_TriggersCleanup(t *testing.T) {
 	te, vpn, route := newTestTunnelEngine(newTestGateway("gw", 0, 0))
 	te.driverInitialized = true // pretend it was initialized
 
-	err := te.Handler()
+	err := te.Handler(context.TODO())
 	if err != nil {
 		t.Fatalf("Handler() returned error: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestHandler_CleanupFails_KeepsInitialized(t *testing.T) {
 	te.driverInitialized = true
 	vpn.cleanupErr = fmt.Errorf("cleanup failed")
 
-	err := te.Handler()
+	err := te.Handler(context.TODO())
 	if err != nil {
 		t.Fatalf("Handler() returned error: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestFindLocalGateway_ListFails_KeepsPreviousState(t *testing.T) {
 	}
 
 	// List succeeds but finds no matching node → should clear
-	e.findLocalGateway()
+	e.findLocalGateway(context.TODO())
 	if e.tunnel.localGateway != nil {
 		t.Error("localGateway should be nil when node not found in any gateway")
 	}
@@ -253,7 +253,7 @@ func TestFindLocalGateway_MatchesNode(t *testing.T) {
 		client:   fakeClient,
 	}
 
-	e.findLocalGateway()
+	e.findLocalGateway(context.TODO())
 	if e.tunnel.localGateway == nil {
 		t.Fatal("tunnel.localGateway should not be nil")
 	}
@@ -282,7 +282,7 @@ func TestFindLocalGateway_NodeNotInGateway(t *testing.T) {
 		client:   fakeClient,
 	}
 
-	e.findLocalGateway()
+	e.findLocalGateway(context.TODO())
 	if e.tunnel.localGateway != nil {
 		t.Error("tunnel.localGateway should be nil when node not in gateway")
 	}
@@ -373,7 +373,7 @@ func TestGetDestAddressForProxyClient(t *testing.T) {
 			}
 			c := builder.Build()
 
-			got := getDestAddressForProxyClient(c, tc.localGateway, tc.nodeName)
+			got := getDestAddressForProxyClient(context.TODO(), c, tc.localGateway, tc.nodeName)
 
 			if len(got) != len(tc.want) {
 				t.Fatalf("dstAddr length mismatch: got %v, want %v", got, tc.want)

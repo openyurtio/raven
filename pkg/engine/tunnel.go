@@ -162,7 +162,7 @@ func (c *TunnelEngine) Handler() error {
 		if ep := getActiveEndpoints(gw, v1beta1.Tunnel); ep != nil {
 			if ep.PublicIP == "" || c.natTraversal && (ep.NATType == "" || ep.PublicPort == 0 && ep.NATType != utils.NATSymmetric) {
 				if ep.PublicIP == "" {
-					if err := c.configGatewayPublicIP(gw); err != nil {
+					if err := c.configGatewayPublicIP(ctx, gw); err != nil {
 						klog.ErrorS(err, "error config gateway public ip", "gateway", klog.KObj(gw))
 					}
 				}
@@ -366,14 +366,14 @@ func (c *TunnelEngine) checkNatCapability() error {
 	return nil
 }
 
-func (c *TunnelEngine) configGatewayPublicIP(gateway *v1beta1.Gateway) error {
+func (c *TunnelEngine) configGatewayPublicIP(ctx context.Context, gateway *v1beta1.Gateway) error {
 	if getActiveEndpoints(gateway, v1beta1.Tunnel).NodeName != c.nodeName {
 		return nil
 	}
 	var publicIP string
 	var err error
 	if gateway.Spec.ExposeType == v1beta1.ExposeTypeLoadBalancer {
-		publicIP, err = c.getLoadBalancerPublicIP(gateway.GetName())
+		publicIP, err = c.getLoadBalancerPublicIP(ctx, gateway.GetName())
 		if err != nil {
 			return err
 		}
@@ -449,9 +449,9 @@ func (c *TunnelEngine) configGatewayStunInfo(gateway *v1beta1.Gateway) error {
 	return err
 }
 
-func (c *TunnelEngine) getLoadBalancerPublicIP(gwName string) (string, error) {
+func (c *TunnelEngine) getLoadBalancerPublicIP(ctx context.Context, gwName string) (string, error) {
 	var svcList v1.ServiceList
-	err := c.ravenClient.List(context.TODO(), &svcList, &client.ListOptions{
+	err := c.ravenClient.List(ctx, &svcList, &client.ListOptions{
 		LabelSelector: labels.Set{
 			raven.LabelCurrentGateway:          gwName,
 			utils.LabelCurrentGatewayType:      v1beta1.Tunnel,

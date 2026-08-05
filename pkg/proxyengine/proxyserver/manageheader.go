@@ -108,7 +108,7 @@ func (h *headerManger) Handler(handler http.Handler) http.Handler {
 		}
 		proxyDest := fmt.Sprintf("%s:%s", ip, port)
 		proxyHost := fmt.Sprintf("%s:%s", host, port)
-		proxyMode, err := h.getProxyMode(host)
+		proxyMode, err := h.getProxyMode(r.Context(), host)
 		if err != nil {
 			logAndHTTPError(w, http.StatusServiceUnavailable, "request host %s and url %s can not get proxy mode, error %s",
 				r.Host, r.URL.String(), err.Error())
@@ -137,7 +137,7 @@ func (h *headerManger) getAPIServerRequestDestAddress(r *http.Request) (name, ip
 	nodeName := r.Header.Get(utils.RavenProxyHostHeaderKey)
 	if nodeName == "" {
 		parts := strings.Split(r.URL.Path, "/")
-		pod, err := h.clientset.CoreV1().Pods(parts[2]).Get(context.TODO(), parts[3], metav1.GetOptions{})
+		pod, err := h.clientset.CoreV1().Pods(parts[2]).Get(r.Context(), parts[3], metav1.GetOptions{})
 		if err != nil {
 			return "", "", "", err
 		}
@@ -145,11 +145,11 @@ func (h *headerManger) getAPIServerRequestDestAddress(r *http.Request) (name, ip
 			nodeName = pod.Spec.NodeName
 		}
 	}
-	node, err := h.clientset.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+	node, err := h.clientset.CoreV1().Nodes().Get(r.Context(), nodeName, metav1.GetOptions{})
 	if err != nil {
 		return "", "", "", err
 	}
-	name, err = h.getGatewayNodeName(node)
+	name, err = h.getGatewayNodeName(r.Context(), node)
 	if err != nil {
 		return "", "", "", fmt.Errorf("can not find gateway node for node %s, error %s", node.Name, err.Error())
 	}
@@ -189,11 +189,11 @@ func (h *headerManger) getNormalRequestDestAddress(r *http.Request) (name, ip, p
 		klog.Warningf("raven proxy server not support dest address %s and request.URL is %s", ipAddress, r.URL.String())
 		return "", "", "", nil
 	}
-	node, err := h.clientset.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+	node, err := h.clientset.CoreV1().Nodes().Get(r.Context(), nodeName, metav1.GetOptions{})
 	if err != nil {
 		return "", "", "", err
 	}
-	name, err = h.getGatewayNodeName(node)
+	name, err = h.getGatewayNodeName(r.Context(), node)
 	if err != nil {
 		return "", "", "", fmt.Errorf("can not find gateway node for node %s, error %s", node.Name, err.Error())
 	}
@@ -204,9 +204,9 @@ func (h *headerManger) getNormalRequestDestAddress(r *http.Request) (name, ip, p
 	return name, ip, port, nil
 }
 
-func (h *headerManger) getProxyMode(nodeName string) (string, error) {
+func (h *headerManger) getProxyMode(ctx context.Context, nodeName string) (string, error) {
 	var gw v1beta1.Gateway
-	err := h.client.Get(context.TODO(), types.NamespacedName{Name: h.gatewayName}, &gw)
+	err := h.client.Get(ctx, types.NamespacedName{Name: h.gatewayName}, &gw)
 	if err != nil {
 		return "", err
 	}
@@ -220,7 +220,7 @@ func (h *headerManger) getProxyMode(nodeName string) (string, error) {
 
 func isAPIServerRequest(r *http.Request) bool {
 	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) < 5 {
+	if len(parts) < 4 {
 		return false
 	}
 	if _, ok := requestsPathPrefix[parts[1]]; ok {
@@ -242,13 +242,13 @@ func getNodeIP(node *v1.Node) string {
 	return ip
 }
 
-func (h *headerManger) getGatewayNodeName(node *v1.Node) (string, error) {
+func (h *headerManger) getGatewayNodeName(ctx context.Context, node *v1.Node) (string, error) {
 	gwName, ok := node.Labels[raven.LabelCurrentGateway]
 	if !ok {
 		return node.Name, nil
 	}
 	var gw v1beta1.Gateway
-	err := h.client.Get(context.TODO(), types.NamespacedName{Name: gwName}, &gw)
+	err := h.client.Get(ctx, types.NamespacedName{Name: gwName}, &gw)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return node.Name, nil

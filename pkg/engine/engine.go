@@ -121,12 +121,12 @@ func (e *Engine) processNextWorkItem() bool {
 }
 
 func (e *Engine) sync() error {
-	e.findLocalGateway()
+	e.findLocalGateway(e.context)
 	err := e.proxy.Handler()
 	if err != nil {
 		return err
 	}
-	err = e.tunnel.Handler()
+	err = e.tunnel.Handler(e.context)
 	if err != nil {
 		return err
 	}
@@ -138,9 +138,9 @@ func (e *Engine) regularSync() {
 	e.queue.Add(&v1beta1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "gw-sync"}})
 }
 
-func (e *Engine) findLocalGateway() {
+func (e *Engine) findLocalGateway(ctx context.Context) {
 	var gwList v1beta1.GatewayList
-	err := e.client.List(context.TODO(), &gwList)
+	err := e.client.List(ctx, &gwList)
 	if err != nil {
 		klog.Errorf("failed to list gateways, keeping previous state: %s", err.Error())
 		return

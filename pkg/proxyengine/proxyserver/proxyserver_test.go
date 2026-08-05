@@ -17,6 +17,7 @@ limitations under the License.
 package proxyserver
 
 import (
+	"context"
 	"net"
 	"testing"
 
@@ -63,7 +64,7 @@ func TestGetProxyServerIPs_GatewayProxyPublicIPsIncluded(t *testing.T) {
 		client:   NewFakeClient(),
 	}
 
-	_, ips := ps.getProxyServerIPsAndDNSName()
+	_, ips := ps.getProxyServerIPsAndDNSName(context.TODO())
 
 	if !containsIP(ips, "1.2.3.4") {
 		t.Errorf("expected gateway proxy publicIP 1.2.3.4 in SAN list, got %v", ips)
@@ -88,7 +89,7 @@ func TestGetProxyServerIPs_TunnelEndpointSkipped(t *testing.T) {
 		client:   NewFakeClient(),
 	}
 
-	_, ips := ps.getProxyServerIPsAndDNSName()
+	_, ips := ps.getProxyServerIPsAndDNSName(context.TODO())
 
 	if containsIP(ips, "9.9.9.9") {
 		t.Errorf("tunnel endpoint publicIP must not appear in proxy server cert SAN, got %v", ips)
@@ -115,7 +116,7 @@ func TestGetProxyServerIPs_NilGatewaySafe(t *testing.T) {
 		}
 	}()
 
-	_, ips := ps.getProxyServerIPsAndDNSName()
+	_, ips := ps.getProxyServerIPsAndDNSName(context.TODO())
 	if !containsIP(ips, "10.0.0.1") {
 		t.Errorf("expected nodeIP 10.0.0.1 still present even with nil gateway, got %v", ips)
 	}
@@ -137,7 +138,7 @@ func TestGetProxyServerIPs_InvalidPublicIPSkipped(t *testing.T) {
 		client:   NewFakeClient(),
 	}
 
-	_, ips := ps.getProxyServerIPsAndDNSName()
+	_, ips := ps.getProxyServerIPsAndDNSName(context.TODO())
 
 	for _, ip := range ips {
 		if ip == nil {

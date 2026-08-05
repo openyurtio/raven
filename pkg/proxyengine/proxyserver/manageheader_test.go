@@ -1,6 +1,7 @@
 package proxyserver
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -151,7 +152,7 @@ func Test_GetGatewayNodeName(t *testing.T) {
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}
-	result, err := hm.getGatewayNodeName(node1)
+	result, err := hm.getGatewayNodeName(context.TODO(), node1)
 	if err != nil {
 		t.Errorf("get gateway node name failed: %v", err)
 	}
@@ -172,7 +173,7 @@ func Test_GetGatewayNodeName_NoGatewayLabel(t *testing.T) {
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}
-	result, err := hm.getGatewayNodeName(nodeWithoutLabel)
+	result, err := hm.getGatewayNodeName(context.TODO(), nodeWithoutLabel)
 	if err != nil {
 		t.Errorf("get gateway node name failed: %v", err)
 	}
@@ -196,7 +197,7 @@ func Test_GetGatewayNodeName_GatewayNotFound(t *testing.T) {
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}
-	result, err := hm.getGatewayNodeName(nodeWithNonExistentGw)
+	result, err := hm.getGatewayNodeName(context.TODO(), nodeWithNonExistentGw)
 	if err != nil {
 		t.Errorf("expected no error when gateway not found, got: %v", err)
 	}
@@ -228,7 +229,7 @@ func Test_GetGatewayNodeName_NoActiveEndpoints(t *testing.T) {
 		gatewayName: "gw-fake",
 		isIPv4:      true,
 	}
-	_, err := hm.getGatewayNodeName(nodeWithGw)
+	_, err := hm.getGatewayNodeName(context.TODO(), nodeWithGw)
 	if err == nil {
 		t.Errorf("expected error when gateway has no active endpoints")
 	}
@@ -252,7 +253,7 @@ func Test_isAPIServerRequest(t *testing.T) {
 		},
 		{
 			name:     "portForward request",
-			path:     "/portForward/default/pod1/container1",
+			path:     "/portForward/default/pod1",
 			expected: true,
 		},
 		{
@@ -393,7 +394,7 @@ func Test_getProxyMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mode, err := hm.getProxyMode(tt.nodeName)
+			mode, err := hm.getProxyMode(context.TODO(), tt.nodeName)
 			if tt.expectError && err == nil {
 				t.Errorf("expected error but got none")
 			}
@@ -414,7 +415,7 @@ func Test_getProxyMode_GatewayNotFound(t *testing.T) {
 		gatewayName: "gw-nonexistent",
 		isIPv4:      true,
 	}
-	_, err := hm.getProxyMode("node1")
+	_, err := hm.getProxyMode(context.TODO(), "node1")
 	if err == nil {
 		t.Errorf("expected error when gateway not found")
 	}
