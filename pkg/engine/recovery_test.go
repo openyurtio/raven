@@ -408,3 +408,96 @@ func TestVPNFailureAndDisableKeepProxyRunning(t *testing.T) {
 		t.Fatal("L3 disable stopped Proxy")
 	}
 }
+
+// These interfaces must be exercised through Handler, not just called directly
+// on a driver: readiness also depends on VXLAN and discovery succeeding.
+type reportingVPN struct {
+	mockVPNDriver
+	healthErr, applyErr error
+	healthCalls         int
+	reports             []bool
+}
+
+func (v *reportingVPN) CheckHealth() error         { v.healthCalls++; return v.healthErr }
+func (v *reportingVPN) SetNetworkReady(ready bool) { v.reports = append(v.reports, ready) }
+func (v *reportingVPN) Apply(*types.Network, func(*types.Network) (int, error)) error {
+	v.applyCalled++
+	return v.applyErr
+}
+
+type failingRoute struct {
+	mockRouteDriver
+	applyErr error
+}
+
+func (r *failingRoute) Apply(*types.Network, func() (int, error)) error {
+	r.applyCalled++
+	return r.applyErr
+}
+
+func TestHandlerHealthAndNetworkReadiness(t *testing.T) {
+	failure := errors.New("injected failure")
+	for _, stage := range []string{"success", "health", "discovery", "vpn", "route", "disabled"} {
+		t.Run(stage, func(t *testing.T) {
+			e := recoveryEngine(t, newTestGateway("gw", 1, 0))
+			vpn, route := &reportingVPN{}, &failingRoute{}
+			e.tunnel.vpnDriver, e.tunnel.routeDriver = vpn, route
+			wantErr := failure
+			switch stage {
+			case "success":
+				wantErr = nil
+			case "health":
+				vpn.healthErr = failure
+				// Health failure must short-circuit even before discovery.
+				e.tunnel.ravenClient = nil
+			case "discovery":
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				e.tunnel.ctx = ctx
+				e.tunnel.ravenClient = cancellationAwareClient{e.tunnel.ravenClient}
+				wantErr = context.Canceled
+			case "vpn":
+				vpn.applyErr = failure
+			case "route":
+				route.applyErr = failure
+			case "disabled":
+				e.tunnel.localGateway.Spec.TunnelConfig.Replicas = 0
+				wantErr = nil
+			}
+			err := e.tunnel.Handler(e.context)
+			if !errors.Is(err, wantErr) {
+				t.Fatalf("Handler error = %v, want %v", err, wantErr)
+			}
+			if len(vpn.reports) != 1 || vpn.reports[0] != (stage == "success") {
+				t.Fatalf("readiness reports = %v", vpn.reports)
+			}
+			wantHealth, wantVPN, wantRoute := 1, 0, 0
+			switch stage {
+			case "disabled":
+				wantHealth = 0
+			case "vpn":
+				wantVPN = 1
+			case "route", "success":
+				wantVPN, wantRoute = 1, 1
+			}
+			if vpn.healthCalls != wantHealth || vpn.applyCalled != wantVPN || route.applyCalled != wantRoute {
+				t.Fatalf("health/vpn/route calls = %d/%d/%d", vpn.healthCalls, vpn.applyCalled, route.applyCalled)
+			}
+		})
+	}
+}
+
+func TestRuntimeSchedulingStopsWithEngine(t *testing.T) {
+	e := recoveryEngine(t, newTestGateway("gw", 1, 0))
+	e.tunnel.vpnDriver = &runtimeVPN{delay: time.Millisecond}
+	ctx, cancel := context.WithCancel(e.context)
+	e.context = ctx
+	cancel()
+	e.scheduleDriver()
+	e.requestTunnelRecovery()
+	if e.queue.Len() != 0 {
+		t.Fatal("scheduled work after cancellation")
+	}
+	e.context, e.queue = context.Background(), nil
+	e.scheduleDriver() // An uninitialized queue cannot accept runtime work.
+}

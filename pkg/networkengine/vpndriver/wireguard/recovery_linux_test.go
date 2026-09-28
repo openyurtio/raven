@@ -161,7 +161,11 @@ func TestUserspaceConfigurationErrorDoesNotRestartProcess(t *testing.T) {
 	if err := ensureRecoveryDevice(w); err != nil {
 		t.Fatal(err)
 	}
-	defer w.Cleanup()
+	t.Cleanup(func() {
+		if err := w.Cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
 	f.control.err = syscall.EINVAL
 	if err := ensureRecoveryDevice(w); !errors.Is(err, syscall.EINVAL) {
 		t.Fatalf("error = %v", err)
@@ -264,5 +268,20 @@ func TestBackendSelectionIsScopedToDriverInstance(t *testing.T) {
 	fresh := driver.(*wireguard)
 	if fresh.UsesUserspace() || fresh.device.selected != "" || fresh.privateKey != (wgtypes.Key{}) {
 		t.Fatal("new driver inherited the previous backend or private key")
+	}
+}
+
+func TestRecoveryDeadlineRemainsScheduledBeforeApply(t *testing.T) {
+	w, f := recoveryFixture()
+	f.d.selected = backendUserspace
+	w.recordUserspaceFailure(errors.New("start failed"))
+	w.recovery.next = time.Now().Add(-time.Second)
+	deadline, delay := w.recovery.next, w.recovery.delay
+	// Discovery can fail before Apply. Merely asking for the next deadline
+	// must keep a retry queued without advancing the startup backoff.
+	for i := 0; i < 3; i++ {
+		if w.NextReconcile() != time.Second || w.recovery.next != deadline || w.recovery.delay != delay {
+			t.Fatal("discovery failure lost retry or changed process-start backoff")
+		}
 	}
 }

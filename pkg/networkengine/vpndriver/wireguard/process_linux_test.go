@@ -39,6 +39,8 @@ func TestWireGuardProcessHelper(t *testing.T) {
 	switch os.Getenv("RAVEN_PROCESS_MODE") {
 	case "exit":
 		os.Exit(7)
+	case "clean-exit":
+		os.Exit(0)
 	case "ignore":
 		signal.Ignore(syscall.SIGTERM)
 	}
@@ -242,5 +244,53 @@ func TestStopContextRetainsOwnershipAtDeadline(t *testing.T) {
 				t.Fatal("child was not killed when cleanup budget expired")
 			}
 		})
+	}
+}
+
+func TestProcessCleanExitStillRequiresRecoveryAndReaping(t *testing.T) {
+	var exits atomic.Int32
+	p := testProcess(t, "clean-exit", &exits)
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return !p.Running() })
+	if exits.Load() != 1 {
+		t.Fatal("clean but unexpected exit did not notify recovery")
+	}
+	if err := p.Start(); err == nil {
+		t.Fatal("restarted before reaping")
+	}
+	if err := p.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return !p.Running() })
+}
+
+func TestProcessSocketCleanupFailureCanBeRetried(t *testing.T) {
+	var exits atomic.Int32
+	p := testProcess(t, "sleep", &exits)
+	p.socket = filepath.Join(t.TempDir(), "occupied")
+	if err := os.Mkdir(p.socket, 0700); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(p.socket, "child")
+	if err := os.WriteFile(child, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	p.owned = true
+	if err := p.Stop(); err == nil || !p.owned {
+		t.Fatal("cleanup failure lost ownership")
+	}
+	if err := os.Remove(child); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if p.owned {
+		t.Fatal("successful retry retained ownership")
 	}
 }

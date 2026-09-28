@@ -34,10 +34,11 @@ import (
 )
 
 type fakeControl struct {
-	dev     wgtypes.Device
-	err     error
-	closed  int
-	configs []wgtypes.Config
+	dev      wgtypes.Device
+	err      error
+	closed   int
+	closeErr error
+	configs  []wgtypes.Config
 }
 
 func (c *fakeControl) Device(string) (*wgtypes.Device, error) { return &c.dev, c.err }
@@ -54,7 +55,7 @@ func (c *fakeControl) ConfigureDevice(_ string, cfg wgtypes.Config) error {
 	}
 	return nil
 }
-func (c *fakeControl) Close() error { c.closed++; return nil }
+func (c *fakeControl) Close() error { c.closed++; return c.closeErr }
 
 type fakeProcess struct {
 	running       bool
@@ -613,5 +614,192 @@ func TestPeerUpdatesKeepKernelBehavior(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestChangedPeerFieldsAreApplied(t *testing.T) {
+	for _, field := range []string{"psk", "endpoint", "missing endpoint", "keepalive", "allowed IP contents"} {
+		t.Run(field, func(t *testing.T) {
+			key, psk, ka := wgtypes.Key{1}, wgtypes.Key{2}, 6*time.Second
+			cfg := wgtypes.PeerConfig{PublicKey: key, PresharedKey: &psk,
+				Endpoint:                    &net.UDPAddr{IP: net.ParseIP("192.0.2.1"), Port: 4500},
+				PersistentKeepaliveInterval: &ka, ReplaceAllowedIPs: true,
+				AllowedIPs: parseSubnets([]string{"10.1.0.0/16"})}
+			peer := wgtypes.Peer{PublicKey: key, PresharedKey: psk, Endpoint: cfg.Endpoint,
+				PersistentKeepaliveInterval: ka, AllowedIPs: cfg.AllowedIPs}
+			switch field {
+			case "psk":
+				peer.PresharedKey = wgtypes.Key{3}
+			case "endpoint":
+				peer.Endpoint = &net.UDPAddr{IP: net.ParseIP("192.0.2.2"), Port: 4501}
+			case "missing endpoint":
+				peer.Endpoint = nil
+			case "keepalive":
+				peer.PersistentKeepaliveInterval = time.Second
+			case "allowed IP contents":
+				peer.AllowedIPs = parseSubnets([]string{"10.2.0.0/16"})
+			}
+			control := &fakeControl{}
+			w := &wireguard{wgClient: control}
+			if err := w.configureChangedPeers([]wgtypes.PeerConfig{cfg}, map[string]wgtypes.Peer{key.String(): peer}); err != nil {
+				t.Fatal(err)
+			}
+			if len(control.configs) != 1 || control.configs[0].ReplacePeers || len(control.configs[0].Peers) != 1 {
+				t.Fatal("changed peer was skipped or unrelated peers were replaced")
+			}
+			got := control.configs[0].Peers[0]
+			if got.PublicKey != key || *got.PresharedKey != psk || got.Endpoint.String() != cfg.Endpoint.String() ||
+				*got.PersistentKeepaliveInterval != ka || !got.ReplaceAllowedIPs || got.AllowedIPs[0].String() != cfg.AllowedIPs[0].String() {
+				t.Fatal("desired peer configuration was not preserved")
+			}
+		})
+	}
+}
+
+func TestKernelDeviceAdoptionAndRecreation(t *testing.T) {
+	f := newDeviceFixture()
+	f.link = &netlink.GenericLink{LinkAttrs: netlink.LinkAttrs{Name: DeviceName, Index: 10}, LinkType: wgLinkType}
+	f.control.dev.Type = wgtypes.LinuxKernel
+	ensure := func() error { _, err := f.d.ensure(context.Background(), 1400, wgtypes.Key{1}, 4500); return err }
+	if err := ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if f.adds != 0 || !f.d.owned {
+		t.Fatal("existing kernel device was not adopted")
+	}
+	f.link = nil
+	f.addErr = syscall.EOPNOTSUPP
+	if err := ensure(); !errors.Is(err, syscall.EOPNOTSUPP) {
+		t.Fatalf("recreate error = %v", err)
+	}
+	if f.process.starts != 0 || f.d.selected != backendKernel {
+		t.Fatal("kernel recreation changed backend")
+	}
+	f.addErr = nil
+	if err := ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if f.clients != 2 || f.control.closed != 1 || f.process.starts != 0 || f.link.Attrs().MTU != 1400 {
+		t.Fatal("kernel recreation did not replace client and restore configuration")
+	}
+	if err := f.d.close(); err != nil {
+		t.Fatal(err)
+	}
+	if f.d.owned || f.link != nil {
+		t.Fatal("adopted/recreated link leaked")
+	}
+}
+
+func TestUserspaceRestartWaitsForCleanup(t *testing.T) {
+	for _, stage := range []string{"process", "client", "occupied link", "lookup"} {
+		t.Run(stage, func(t *testing.T) {
+			f := newDeviceFixture()
+			f.d.selected, f.d.client = backendUserspace, f.control
+			failure := errors.New("old resource unavailable")
+			switch stage {
+			case "process":
+				f.process.stopErr = failure
+			case "client":
+				f.control.closeErr = failure
+			case "occupied link":
+				f.link = &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: DeviceName}}
+			case "lookup":
+				f.getErr = failure
+			}
+			if _, err := f.d.ensure(context.Background(), 1400, wgtypes.Key{1}, 4500); err == nil {
+				t.Fatal("restart unexpectedly succeeded")
+			}
+			if f.process.starts != 0 || f.deletes != 0 {
+				t.Fatal("started replacement or deleted occupied device")
+			}
+			if (stage == "process" || stage == "client") && f.d.client != f.control {
+				t.Fatal("lost unclosed client")
+			}
+			f.process.stopErr, f.control.closeErr, f.link, f.getErr = nil, nil, nil, nil
+			if _, err := f.d.ensure(context.Background(), 1400, wgtypes.Key{1}, 4500); err != nil {
+				t.Fatal(err)
+			}
+			if f.process.starts != 1 {
+				t.Fatal("retry failed to start exactly one replacement")
+			}
+			if err := f.d.close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestDeviceConfigurationFailuresKeepOwnership(t *testing.T) {
+	for _, stage := range []string{"client", "type", "configure", "mtu", "up", "early exit"} {
+		t.Run(stage, func(t *testing.T) {
+			f := newDeviceFixture()
+			f.addErr = syscall.EOPNOTSUPP
+			failure := errors.New("injected configuration failure")
+			switch stage {
+			case "client":
+				f.d.newClient = func() (controlClient, error) { return nil, failure }
+			case "type":
+				start := f.process.start
+				f.process.start = func() error { err := start(); f.control.dev.Type = wgtypes.LinuxKernel; return err }
+			case "configure":
+				f.d.newClient = func() (controlClient, error) {
+					return &rejectingConfigureControl{fakeControl: f.control, err: failure}, nil
+				}
+			case "mtu":
+				f.d.links.setMTU = func(netlink.Link, int) error { return failure }
+			case "up":
+				f.d.links.setUp = func(netlink.Link) error { return failure }
+			case "early exit":
+				f.d.newClient = func() (controlClient, error) {
+					f.process.running = false
+					f.control.err = syscall.ENOENT
+					return f.control, nil
+				}
+			}
+			if _, err := f.d.ensure(context.Background(), 1400, wgtypes.Key{1}, 4500); err == nil {
+				t.Fatal("configuration failure hidden")
+			}
+			if !f.d.owned || f.process.starts != 1 || f.d.selected != backendUserspace {
+				t.Fatal("partial resources lost or backend changed")
+			}
+			if err := f.d.close(); err != nil {
+				t.Fatal(err)
+			}
+			if f.process.running || f.link != nil || f.d.owned {
+				t.Fatal("partial startup leaked resources")
+			}
+		})
+	}
+}
+
+type rejectingConfigureControl struct {
+	*fakeControl
+	err error
+}
+
+func (c *rejectingConfigureControl) ConfigureDevice(string, wgtypes.Config) error { return c.err }
+
+func TestDeviceCleanupProtectsForeignLinkAndRetriesDelete(t *testing.T) {
+	f := newDeviceFixture()
+	if _, err := f.d.ensure(context.Background(), 1400, wgtypes.Key{1}, 4500); err != nil {
+		t.Fatal(err)
+	}
+	original := f.link
+	f.link = &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: DeviceName}}
+	if err := f.d.close(); err == nil || f.deletes != 0 || !f.d.owned {
+		t.Fatal("foreign link deleted or ownership lost")
+	}
+	f.link = original
+	del := f.d.links.del
+	f.d.links.del = func(netlink.Link) error { return syscall.EPERM }
+	if err := f.d.close(); !errors.Is(err, syscall.EPERM) || !f.d.owned {
+		t.Fatalf("delete failure not retained: %v", err)
+	}
+	f.d.links.del = del
+	if err := f.d.close(); err != nil {
+		t.Fatal(err)
+	}
+	if f.d.owned || f.link != nil || f.control.closed != 1 {
+		t.Fatal("retry did not finish cleanup exactly once")
 	}
 }

@@ -105,10 +105,12 @@ type wireguard struct {
 	listenPort        int
 	keepaliveInterval int
 
-	// Device-only tests replace these operations without changing NAT rules.
+	// System operations are kept separate from reconciliation and retry policy.
 	withdrawRoutes func() error
 	cleanupNAT     func() error
 	applyNAT       func(*types.Network) error
+	applyRoutes    func(*types.Network) error
+	cleanupIPSet   func() error
 }
 
 func New(cfg *config.Config) (vpndriver.Driver, error) {
@@ -129,6 +131,8 @@ func New(cfg *config.Config) (vpndriver.Driver, error) {
 	}
 	w.cleanupNAT = w.cleanupRavenNAT
 	w.applyNAT = w.ensureRavenSkipNAT
+	w.applyRoutes = w.ensureRoutes
+	w.cleanupIPSet = cleanupWireGuardIPSet
 	return w, nil
 }
 
@@ -388,6 +392,19 @@ func (w *wireguard) Apply(network *types.Network, routeDriverMTUFn func(*types.N
 	if err := w.ensureWgLink(network, routeDriverMTUFn); err != nil {
 		return fmt.Errorf("ensure WireGuard device: %w", err)
 	}
+	if err := w.applyRoutes(network); err != nil {
+		return err
+	}
+
+	if err := w.ensureConnections(network, edge, relay, centralAllowedIPs); err != nil {
+		return fmt.Errorf("error ensure VPN tunnels: %s", err.Error())
+	}
+
+	w.configured = true
+	return nil
+}
+
+func (w *wireguard) ensureRoutes(network *types.Network) error {
 	// 3. Config device route and rules
 	currentRoutes, err := networkutil.ListRoutesOnNode(wgRouteTableID)
 	if err != nil {
@@ -410,11 +427,6 @@ func (w *wireguard) Apply(network *types.Network, routeDriverMTUFn func(*types.N
 		return fmt.Errorf("error applying wireguard rules: %s", err.Error())
 	}
 
-	if err = w.ensureConnections(network, edge, relay, centralAllowedIPs); err != nil {
-		return fmt.Errorf("error ensure VPN tunnels: %s", err.Error())
-	}
-
-	w.configured = true
 	return nil
 }
 
@@ -510,20 +522,24 @@ func (w *wireguard) cleanupRavenNAT() error {
 			"-m", "comment", "--comment", "raven traffic should skip NAT", "-o", DeviceName, "-j", iptablesutil.RavenPostRoutingChain))
 		errs = append(errs, w.iptables.ClearAndDeleteChain(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain))
 	}
-	errs = append(errs, cleanupWireGuardIPSet())
+	errs = append(errs, w.cleanupIPSet())
 	return errors.Join(errs...)
 }
 
 // cleanupWireGuardIPSet tolerates partial startup without creating a new set.
 // Libreswan continues to use the existing shared cleanup helper.
 func cleanupWireGuardIPSet() error {
-	sets, err := netlink.IpsetListAll()
+	return cleanupIPSet(netlink.IpsetListAll, netlink.IpsetFlush, netlink.IpsetDestroy)
+}
+
+func cleanupIPSet(list func() ([]netlink.IPSetResult, error), flush, destroy func(string) error) error {
+	sets, err := list()
 	if err != nil {
 		return fmt.Errorf("list WireGuard ipsets: %w", err)
 	}
 	for _, set := range sets {
 		if set.SetName == ravenSkipNatSet {
-			return errors.Join(netlink.IpsetFlush(ravenSkipNatSet), netlink.IpsetDestroy(ravenSkipNatSet))
+			return errors.Join(flush(ravenSkipNatSet), destroy(ravenSkipNatSet))
 		}
 	}
 	return nil
