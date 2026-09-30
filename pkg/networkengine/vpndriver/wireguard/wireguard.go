@@ -87,6 +87,8 @@ type wireguard struct {
 	psk        wgtypes.Key
 	wgLink     netlink.Link
 	device     *deviceManager
+	// Last successfully requested endpoints, separate from endpoints learned by WireGuard.
+	peerEndpoints map[wgtypes.Key]string
 
 	// Runtime dependencies and state for the userspace backend.
 	ctx        context.Context
@@ -202,6 +204,7 @@ func (w *wireguard) withdrawDeviceContext(ctx context.Context) error {
 		errs = append(errs, w.device.closeContext(ctx))
 	}
 	w.wgClient, w.wgLink = nil, nil
+	w.peerEndpoints = nil
 	return errors.Join(errs...)
 }
 
@@ -591,6 +594,7 @@ func (w *wireguard) removePeer(key *wgtypes.Key) error {
 	if err != nil {
 		return fmt.Errorf("error remove WireGuard peer with key %s: %v", key, err)
 	}
+	delete(w.peerEndpoints, *key)
 
 	klog.InfoS("remove peer with key successfully", "key", key.String())
 

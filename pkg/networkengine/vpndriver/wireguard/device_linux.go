@@ -23,6 +23,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -47,6 +49,29 @@ type controlClient interface {
 
 func configurationRejected(err error) bool {
 	return errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES)
+}
+
+// The pinned wgctrl userspace parser wraps protocol errno values as text in
+// os.SyscallError. Preserve that diagnostic while restoring errors.Is support.
+func normalizeUserspaceError(err error) error {
+	var syscallErr *os.SyscallError
+	if !errors.As(err, &syscallErr) || syscallErr.Syscall != "read" {
+		return err
+	}
+	value, ok := strings.CutPrefix(syscallErr.Err.Error(), "wguser: errno=")
+	if !ok {
+		return err
+	}
+	code, parseErr := strconv.ParseInt(value, 10, 32)
+	if parseErr != nil || code == 0 {
+		return err
+	}
+	// wireguard-go returns negative errno values; other UAPI implementations
+	// may use positive values as described by the protocol.
+	if code < 0 {
+		code = -code
+	}
+	return fmt.Errorf("%w (%w)", err, syscall.Errno(code))
 }
 
 // wgctrl's userspace transport has no I/O deadline. Keep at most one
@@ -95,6 +120,7 @@ func (c *userspaceControl) call(parent context.Context, fn func() error) error {
 	go func() { result = fn(); close(done) }()
 	select {
 	case <-done:
+		result = normalizeUserspaceError(result)
 		// A rejected configuration stays on the normal configuration retry.
 		// Transport failures make this userspace control connection unusable.
 		if result != nil && !configurationRejected(result) && !errors.Is(result, os.ErrNotExist) {
@@ -410,9 +436,15 @@ func (d *deviceManager) closeContext(ctx context.Context) error {
 		errs = append(errs, err)
 		return errors.Join(errs...)
 	}
-	if d.owned {
+	if d.owned || d.selected == "" {
 		link, err := d.links.get(DeviceName)
-		if err == nil {
+		// A fresh instance may be asked to clean up before ensure ever runs
+		// (for example after losing the gateway role during an Agent restart).
+		// Only adopt the reserved-name kernel device; never adopt a foreign TUN.
+		if err == nil && !d.owned && link.Type() == wgLinkType {
+			d.selected, d.owned = backendKernel, true
+		}
+		if err == nil && d.owned {
 			if (d.selected == backendKernel && link.Type() != wgLinkType) || (d.selected == backendUserspace && link.Type() != "tuntap") {
 				err = fmt.Errorf("refusing to delete unexpected device %s (%s)", DeviceName, link.Type())
 			} else {

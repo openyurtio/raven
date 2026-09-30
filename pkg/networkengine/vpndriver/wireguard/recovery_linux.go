@@ -169,14 +169,34 @@ func (w *wireguard) configureChangedPeers(desired []wgtypes.PeerConfig, current 
 	var changed []wgtypes.PeerConfig
 	for _, cfg := range desired {
 		peer, exists := current[cfg.PublicKey.String()]
+		// WireGuard learns endpoints from authenticated traffic, including NAT
+		// port mappings. Only resend an unchanged requested endpoint when the
+		// peer or its endpoint is missing, even if other peer fields changed.
+		if exists && peer.Endpoint != nil && cfg.Endpoint != nil {
+			if previous, ok := w.peerEndpoints[cfg.PublicKey]; ok && previous == cfg.Endpoint.String() {
+				cfg.Endpoint = nil
+			}
+		}
 		if !exists || !peerConfigMatches(peer, cfg) {
 			changed = append(changed, cfg)
 		}
 	}
-	if len(changed) == 0 {
-		return nil
+	if len(changed) != 0 {
+		if err := w.wgClient.ConfigureDevice(DeviceName, wgtypes.Config{Peers: changed}); err != nil {
+			return err
+		}
 	}
-	return w.wgClient.ConfigureDevice(DeviceName, wgtypes.Config{Peers: changed})
+	// Do not commit desired endpoints on a rejected update: the next retry
+	// must still apply the requested address rather than treating it as learned.
+	if w.peerEndpoints == nil {
+		w.peerEndpoints = make(map[wgtypes.Key]string)
+	}
+	for _, cfg := range desired {
+		if cfg.Endpoint != nil {
+			w.peerEndpoints[cfg.PublicKey] = cfg.Endpoint.String()
+		}
+	}
+	return nil
 }
 
 func peerConfigMatches(peer wgtypes.Peer, cfg wgtypes.PeerConfig) bool {
