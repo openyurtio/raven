@@ -98,6 +98,8 @@ type wireguard struct {
 	ready      bool
 	configured bool
 	recovery   userspaceRecovery
+	// Owned by the reconciliation worker, separate from process-start backoff.
+	cleanupPending bool
 
 	iptables          iptablesutil.IPTablesInterface
 	ipset             ipsetutil.IPSetInterface
@@ -484,7 +486,12 @@ func (w *wireguard) Cleanup() error {
 
 // CleanupContext bounds userspace waits using the caller's remaining budget.
 // Cleanup must work even after the driver's runtime context is cancelled.
-func (w *wireguard) CleanupContext(ctx context.Context) error {
+func (w *wireguard) CleanupContext(ctx context.Context) (cleanupErr error) {
+	defer func() {
+		if w.UsesUserspace() {
+			w.cleanupPending = cleanupErr != nil
+		}
+	}()
 	if w.UsesUserspace() {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
@@ -495,8 +502,8 @@ func (w *wireguard) CleanupContext(ctx context.Context) error {
 	}
 	w.SetNetworkReady(false)
 	w.configured = false
-	// Teardown errors use configuration-event retries. No child restart is
-	// desired after role loss/L3 disable, including when NAT cleanup fails.
+	// Stop process recovery immediately. Failed teardown has its own retry
+	// state, so role loss/L3 disable never requests a replacement child.
 	w.recovery = userspaceRecovery{}
 	err := w.withdrawDeviceContext(ctx)
 	if ctx.Err() != nil {

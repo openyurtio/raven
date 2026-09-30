@@ -134,8 +134,8 @@ func (e *Engine) processNextWorkItem() bool {
 		if err := e.tunnel.Handler(e.context); err != nil {
 			klog.ErrorS(err, "VPN runtime reconciliation failed")
 			if e.nextDriverReconcile() == 0 {
-				// No runtime retry is pending (for example, the child has
-				// stopped but route cleanup failed). Use configuration retry.
+				// Errors without a runtime or teardown deadline retain the
+				// normal configuration-event retry policy.
 				e.handleEventErr(err, gw)
 				return true
 			}

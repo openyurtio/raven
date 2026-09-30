@@ -55,8 +55,14 @@ func TestUserspacePeerReconcilePreservesLearnedEndpoint(t *testing.T) {
 				t.Fatal(err)
 			}
 			cfg := control.configs[0].Peers[0]
+			// UAPI writes and reads whole seconds: edge's existing 20ns
+			// configuration reads back as zero; userspace relay uses 6s.
+			keepalive := time.Duration(0)
+			if relay {
+				keepalive = 6 * time.Second
+			}
 			peer := wgtypes.Peer{PublicKey: key, PresharedKey: w.psk, AllowedIPs: cfg.AllowedIPs,
-				PersistentKeepaliveInterval: *cfg.PersistentKeepaliveInterval,
+				PersistentKeepaliveInterval: keepalive,
 				Endpoint:                    &net.UDPAddr{IP: net.ParseIP("192.0.2.100"), Port: 62000}}
 			current := map[string]wgtypes.Peer{key.String(): peer}
 			for i := 0; i < 3; i++ {
@@ -65,7 +71,7 @@ func TestUserspacePeerReconcilePreservesLearnedEndpoint(t *testing.T) {
 				}
 			}
 			if len(control.configs) != 1 {
-				t.Fatal("health reconciliation overwrote the learned NAT endpoint")
+				t.Fatal("health reconciliation reconfigured an unchanged peer")
 			}
 
 			endpoint.Subnets = []string{"10.2.0.0/16"}

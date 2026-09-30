@@ -25,8 +25,8 @@ func (e *Engine) requestTunnelRecovery() {
 	}
 }
 
-// The driver selects the delay. Engine's configuration-event rate limiter is
-// unchanged, and this queue item is consumed by the same reconciliation worker.
+// Runtime and pending teardown deadlines use the same reconciliation worker.
+// Engine's configuration-event rate limiter is unchanged.
 func (e *Engine) scheduleDriver() {
 	if e.queue == nil || e.context.Err() != nil {
 		return
@@ -37,6 +37,15 @@ func (e *Engine) scheduleDriver() {
 }
 
 func (e *Engine) nextDriverReconcile() time.Duration {
+	// VPN teardown can succeed while the following route-driver cleanup
+	// fails. Retain a queue deadline until both finish, even without periodic
+	// sync or after configuration-event retries have been exhausted.
+	if e.tunnel.cleanupPending {
+		if e.tunnel.ctx != nil && e.tunnel.ctx.Err() != nil {
+			return 0
+		}
+		return 5 * time.Second
+	}
 	if driver, ok := e.tunnel.vpnDriver.(interface{ NextReconcile() time.Duration }); ok {
 		return driver.NextReconcile()
 	}

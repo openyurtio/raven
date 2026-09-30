@@ -131,7 +131,11 @@ func testRestartCleanupRemovesExistingKernelDevice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer control.Close()
+	t.Cleanup(func() {
+		if err := control.Close(); err != nil {
+			t.Errorf("close WireGuard client: %v", err)
+		}
+	})
 	key, err := wgtypes.GeneratePrivateKey()
 	if err != nil {
 		t.Fatal(err)
@@ -173,7 +177,11 @@ func TestWireGuardNATPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Errorf("close WireGuard client: %v", err)
+		}
+	})
 	port := 4500
 	_, subnet, _ := net.ParseCIDR("10.200.0.1/32")
 	if err = c.ConfigureDevice("wg-edge", wgtypes.Config{PrivateKey: &cfg.PrivateKey, ListenPort: &port, Peers: []wgtypes.PeerConfig{{PublicKey: cfg.RemoteKey, Endpoint: &net.UDPAddr{IP: net.ParseIP("198.18.0.1"), Port: 4500}, AllowedIPs: []net.IPNet{*subnet}}}}); err != nil {
@@ -246,10 +254,7 @@ func testHealthReconcilePreservesNATTraffic(t *testing.T) {
 		return exec.Command("ip", "netns", "exec", ns, "ping", "-I", "10.200.0.2", "-c", "1", "-W", "1", "10.200.0.1").Run()
 	}
 	deadline := time.Now().Add(8 * time.Second)
-	for {
-		if edgePing() == nil {
-			break
-		}
+	for edgePing() != nil {
 		if time.Now().After(deadline) {
 			t.Fatal("initial NAT tunnel did not work")
 		}

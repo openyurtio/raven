@@ -29,6 +29,7 @@ import (
 	"github.com/openyurtio/raven/pkg/networkengine/routedriver"
 	"github.com/openyurtio/raven/pkg/networkengine/vpndriver"
 	"github.com/openyurtio/raven/pkg/types"
+	"github.com/openyurtio/raven/pkg/utils"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -350,19 +351,67 @@ func TestRuntimeCleanupWaitsForReconciliation(t *testing.T) {
 	}
 }
 
-func TestRuntimeRouteCleanupFailureUsesConfigurationRetry(t *testing.T) {
-	e := recoveryEngine(t, newTestGateway("gw", 0, 0))
-	e.tunnel.vpnDriver = &runtimeVPN{}
-	route := e.tunnel.routeDriver.(*mockRouteDriver)
-	route.cleanupErr = errors.New("route cleanup failed")
-	e.requestTunnelRecovery()
-	if !e.processNextWorkItem() || !e.tunnel.cleanupPending || e.queue.NumRequeues(e.recoveryRequest) != 1 {
-		t.Fatal("route cleanup failure was lost after userspace recovery ended")
-	}
-	route.cleanupErr = nil
-	e.requestTunnelRecovery()
-	if !e.processNextWorkItem() || e.tunnel.cleanupPending || e.tunnel.driverInitialized {
-		t.Fatal("configuration retry did not finish route cleanup")
+// Capture delayed work instead of waiting for wall-clock queue timers. All
+// ordinary-event retries are already exhausted when this queue is installed.
+type cleanupRetryQueue struct {
+	workqueue.TypedRateLimitingInterface[*v1beta1.Gateway]
+	pending *v1beta1.Gateway
+	delay   time.Duration
+	calls   int
+}
+
+func (q *cleanupRetryQueue) NumRequeues(*v1beta1.Gateway) int { return utils.MaxRetries }
+func (q *cleanupRetryQueue) AddAfter(item *v1beta1.Gateway, delay time.Duration) {
+	q.pending, q.delay = item, delay
+	q.calls++
+}
+
+func TestCleanupRetriesAfterConfigurationRetryLimit(t *testing.T) {
+	for _, event := range []string{"configuration", "runtime"} {
+		for _, stage := range []string{"vpn", "route"} {
+			t.Run(event+"/"+stage, func(t *testing.T) {
+				gw := newTestGateway("gw", 0, 0)
+				e := recoveryEngine(t, gw)
+				e.syncRules = false
+				vpn := &runtimeVPN{} // No process recovery or health deadline.
+				e.tunnel.vpnDriver = vpn
+				route := e.tunnel.routeDriver.(*mockRouteDriver)
+				failure := errors.New("cleanup temporarily unavailable")
+				if stage == "vpn" {
+					vpn.cleanupErr = failure
+				} else {
+					route.cleanupErr = failure
+				}
+				q := &cleanupRetryQueue{TypedRateLimitingInterface: e.queue}
+				e.queue = q
+				if event == "runtime" {
+					e.requestTunnelRecovery()
+				} else {
+					e.queue.Add(gw)
+				}
+				if !e.processNextWorkItem() || !e.tunnel.cleanupPending || !e.tunnel.driverInitialized {
+					t.Fatal("cleanup failure did not retain the existing drivers")
+				}
+				if q.pending != e.recoveryRequest || q.delay != 5*time.Second || q.calls != 1 || q.Len() != 0 {
+					t.Fatal("cleanup did not schedule an independent delayed retry")
+				}
+				if stage == "vpn" && route.cleanupCalled != 0 {
+					t.Fatal("route cleanup ran before VPN cleanup succeeded")
+				}
+				// Deliver only the scheduled retry, with no configuration or
+				// periodic sync event, after the underlying failure clears.
+				vpn.cleanupErr, route.cleanupErr = nil, nil
+				q.Add(q.pending)
+				q.pending = nil
+				e.proxy = &ProxyEngine{} // Runtime teardown must bypass Proxy.
+				if !e.processNextWorkItem() || e.tunnel.cleanupPending || e.tunnel.driverInitialized {
+					t.Fatal("scheduled retry did not finish both drivers' cleanup")
+				}
+				if q.pending != nil || q.calls != 1 || vpn.applyCalled != 0 || vpn.initCalled != 0 || route.applyCalled != 0 || route.initCalled != 0 {
+					t.Fatal("successful teardown restarted a driver or kept scheduling")
+				}
+			})
+		}
 	}
 }
 
@@ -500,4 +549,24 @@ func TestRuntimeSchedulingStopsWithEngine(t *testing.T) {
 	}
 	e.context, e.queue = context.Background(), nil
 	e.scheduleDriver() // An uninitialized queue cannot accept runtime work.
+}
+
+func TestPendingCleanupSchedulingStopsWithRuntimeContext(t *testing.T) {
+	e := recoveryEngine(t, newTestGateway("gw", 0, 0))
+	e.tunnel.cleanupPending = true
+	ctx, cancel := context.WithCancel(context.Background())
+	e.tunnel.ctx = ctx
+	if e.nextDriverReconcile() != 5*time.Second {
+		t.Fatal("missing pending cleanup deadline")
+	}
+	cancel()
+	if e.nextDriverReconcile() != 0 {
+		t.Fatal("cleanup deadline survived runtime cancellation")
+	}
+	q := &cleanupRetryQueue{TypedRateLimitingInterface: e.queue}
+	e.queue = q
+	e.scheduleDriver()
+	if q.calls != 0 {
+		t.Fatal("scheduled cleanup after shutdown")
+	}
 }

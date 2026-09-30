@@ -80,6 +80,11 @@ func (w *wireguard) CheckHealth() error {
 	if !w.UsesUserspace() {
 		return nil
 	}
+	// Finish teardown before discovery or starting a newly desired tunnel.
+	// This also retries cleanup after role loss when discovery is unavailable.
+	if w.cleanupPending {
+		return w.Cleanup()
+	}
 	w.healthMu.Lock()
 	fault := w.fault
 	w.healthMu.Unlock()
@@ -100,6 +105,9 @@ func (w *wireguard) UsesUserspace() bool {
 func (w *wireguard) NextReconcile() time.Duration {
 	if w.device == nil || w.device.selected != backendUserspace || (w.ctx != nil && w.ctx.Err() != nil) {
 		return 0
+	}
+	if w.cleanupPending {
+		return 5 * time.Second
 	}
 	if w.recovery.err != nil {
 		if delay := time.Until(w.recovery.next); delay > 0 {
@@ -206,7 +214,9 @@ func peerConfigMatches(peer wgtypes.Peer, cfg wgtypes.PeerConfig) bool {
 	if cfg.Endpoint != nil && (peer.Endpoint == nil || peer.Endpoint.String() != cfg.Endpoint.String()) {
 		return false
 	}
-	if cfg.PersistentKeepaliveInterval != nil && peer.PersistentKeepaliveInterval != *cfg.PersistentKeepaliveInterval {
+	// UAPI encodes keepalive in whole seconds. Compare at that precision so
+	// sub-second values do not trigger another update after reading them back.
+	if cfg.PersistentKeepaliveInterval != nil && peer.PersistentKeepaliveInterval/time.Second != *cfg.PersistentKeepaliveInterval/time.Second {
 		return false
 	}
 	if len(peer.AllowedIPs) != len(cfg.AllowedIPs) {

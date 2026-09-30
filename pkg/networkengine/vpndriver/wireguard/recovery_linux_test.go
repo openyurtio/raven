@@ -28,6 +28,8 @@ import (
 
 	"github.com/openyurtio/raven/cmd/agent/app/config"
 	"github.com/openyurtio/raven/pkg/types"
+	"github.com/openyurtio/raven/pkg/utils"
+	"github.com/vishvananda/netlink"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
@@ -226,21 +228,107 @@ func TestInitialUserspaceConfigurationRejectionKeepsProcess(t *testing.T) {
 	}
 }
 
-func TestUserspaceTeardownErrorDoesNotScheduleProcessRecovery(t *testing.T) {
+func TestUserspaceTeardownRetriesWithoutProcessRecovery(t *testing.T) {
+	for _, mode := range []string{"disable", "role loss", "no peers"} {
+		for _, stage := range []string{"routes", "NAT", "process", "device"} {
+			t.Run(mode+"/"+stage, func(t *testing.T) {
+				w, f := recoveryFixture()
+				w.nodeName = "local"
+				f.addErr = syscall.EOPNOTSUPP
+				if err := ensureRecoveryDevice(w); err != nil {
+					t.Fatal(err)
+				}
+				failure := errors.New("cleanup temporarily unavailable")
+				deleteLink := f.d.links.del
+				switch stage {
+				case "routes":
+					w.withdrawRoutes = func() error { return failure }
+				case "NAT":
+					w.cleanupNAT = func() error { return failure }
+				case "process":
+					f.process.stopErr = failure
+				case "device":
+					f.d.links.del = func(netlink.Link) error { return failure }
+				}
+				// A teardown must cancel even an outstanding start-recovery request.
+				w.recordUserspaceFailure(errors.New("previous runtime failure"))
+				teardown := w.Cleanup
+				if mode != "disable" {
+					network := &types.Network{
+						LocalEndpoint:   &types.Endpoint{NodeName: "local", Config: map[string]string{PublicKey: w.privateKey.PublicKey().String()}},
+						RemoteEndpoints: map[types.GatewayName]*types.Endpoint{"remote": {NodeName: "remote"}},
+					}
+					if mode == "role loss" {
+						network.LocalEndpoint.NodeName = "new-gateway"
+					}
+					teardown = func() error { return w.Apply(network, nil) }
+				}
+				if err := teardown(); !errors.Is(err, failure) {
+					t.Fatalf("cleanup error = %v", err)
+				}
+				for i := 0; i <= utils.MaxRetries; i++ {
+					if !w.cleanupPending || w.NextReconcile() != 5*time.Second || w.recovery != (userspaceRecovery{}) {
+						t.Fatal("cleanup retry was lost or scheduled process recovery")
+					}
+					// Handler invokes this before discovery, which may itself fail.
+					if err := w.CheckHealth(); !errors.Is(err, failure) {
+						t.Fatalf("cleanup retry error = %v", err)
+					}
+					if f.process.starts != 1 {
+						t.Fatal("teardown started a replacement child")
+					}
+				}
+				ctx, cancel := context.WithCancel(w.ctx)
+				w.ctx = ctx
+				cancel()
+				if w.NextReconcile() != 0 || !w.cleanupPending {
+					t.Fatal("cancellation scheduled more work or lost retained cleanup")
+				}
+				w.withdrawRoutes, w.cleanupNAT, f.process.stopErr = nil, nil, nil
+				f.d.links.del = deleteLink
+				if err := w.Cleanup(); err != nil {
+					t.Fatal(err)
+				}
+				w.ctx = context.Background()
+				if w.cleanupPending || w.NextReconcile() != 0 || f.process.running || f.link != nil || f.d.client != nil || f.process.starts != 1 {
+					t.Fatal("successful teardown did not release resources and stop retries")
+				}
+			})
+		}
+	}
+}
+
+func TestUserspaceApplyFinishesPendingCleanupBeforeRestart(t *testing.T) {
 	w, f := recoveryFixture()
 	f.addErr = syscall.EOPNOTSUPP
+	w.nodeName = "local"
+	w.applyNAT = func(*types.Network) error { return nil }
+	w.applyRoutes = func(*types.Network) error { return nil }
 	if err := ensureRecoveryDevice(w); err != nil {
 		t.Fatal(err)
 	}
-	natErr := errors.New("NAT cleanup failed")
-	w.cleanupNAT = func() error { return natErr }
-	if err := w.Cleanup(); !errors.Is(err, natErr) {
-		t.Fatalf("cleanup error = %v", err)
+	failure := errors.New("NAT cleanup unavailable")
+	w.cleanupNAT = func() error { return failure }
+	if err := w.Cleanup(); !errors.Is(err, failure) {
+		t.Fatal(err)
 	}
-	if w.NextReconcile() != 0 || w.recovery.err != nil || f.process.running {
-		t.Fatal("teardown error entered process restart policy")
+	network := &types.Network{
+		LocalEndpoint: &types.Endpoint{NodeName: "local", Config: map[string]string{PublicKey: w.privateKey.PublicKey().String()}},
+		RemoteEndpoints: map[types.GatewayName]*types.Endpoint{"remote": {
+			NodeName: "remote", PublicIP: "192.0.2.2", Subnets: []string{"10.2.0.0/16"}, Config: map[string]string{PublicKey: (wgtypes.Key{2}).String()},
+		}},
+	}
+	mtu := func(*types.Network) (int, error) { return 1400, nil }
+	if err := w.Apply(network, mtu); !errors.Is(err, failure) || f.process.starts != 1 {
+		t.Fatalf("restarted before cleanup completed: %v", err)
 	}
 	w.cleanupNAT = nil
+	if err := w.Apply(network, mtu); err != nil {
+		t.Fatal(err)
+	}
+	if w.cleanupPending || !w.configured || f.process.starts != 2 || !f.process.running {
+		t.Fatal("current topology was not applied after cleanup completed")
+	}
 	if err := w.Cleanup(); err != nil {
 		t.Fatal(err)
 	}

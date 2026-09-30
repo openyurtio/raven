@@ -68,6 +68,8 @@ The WireGuard driver owns userspace failure detection, startup backoff, and the 
 
 Userspace readiness waits and individual UAPI operations each have a 10-second timeout. Running devices are checked every five seconds, and startup failures use exponential backoff from one to 30 seconds. Ordinary configuration events cannot bypass startup backoff, and ordinary configuration errors do not increase it. Exit notifications and health scheduling still drive recovery when periodic reconciliation is disabled with `--sync-raven-rules=false`.
 
+Failed userspace teardown schedules another attempt through the same queue after five seconds, independently of process-start backoff and the configuration-event retry limit. This covers VPN teardown after role loss or removal of peers, and VPN/route-driver teardown when L3 is disabled. Pending VPN cleanup runs before discovery or a replacement process can start. Successful cleanup or Agent cancellation ends these retries; cleanup never requests a replacement child on its own.
+
 | Event | Driver instances, keys, and resources |
 | --- | --- |
 | Initialization | Create and initialize a new route driver, then create a new VPN driver; optionally inject lifecycle dependencies before calling VPN `Init()`. |
