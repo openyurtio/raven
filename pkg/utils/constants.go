@@ -49,6 +49,7 @@ const (
 	GatewayProxyInternalService  = "x-raven-proxy-internal-svc"
 	LabelCurrentGatewayEndpoints = "raven.openyurt.io/endpoints-name"
 	LabelCurrentGatewayType      = "raven.openyurt.io/gateway-type"
+	AnnotationForwardNodeIP      = "raven.openyurt.io/forward-node-ip"
 
 	NATSymmetric      = "Symmetric NAT"
 	NATPortRestricted = "Port Restricted cone NAT"
