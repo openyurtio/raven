@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/EvilSuperstars/go-cidrman"
@@ -225,8 +226,21 @@ func (c *TunnelEngine) getMergedSubnets(nodeInfo []v1beta1.NodeInfo) []string {
 	return subnets
 }
 
+// shouldForwardNodeIP lets a gateway override the global forward-node-ip setting
+// through the raven.openyurt.io/forward-node-ip annotation.
+func (c *TunnelEngine) shouldForwardNodeIP(gw *v1beta1.Gateway) bool {
+	switch strings.ToLower(gw.Annotations[utils.AnnotationForwardNodeIP]) {
+	case "true":
+		return true
+	case "false":
+		return false
+	default:
+		return c.forwardNodeIP
+	}
+}
+
 func (c *TunnelEngine) syncGateway(gw *v1beta1.Gateway) {
-	if c.forwardNodeIP {
+	if c.shouldForwardNodeIP(gw) {
 		c.appendNodeIP(gw)
 	}
 	aep := getActiveEndpoints(gw, v1beta1.Tunnel)
