@@ -60,6 +60,13 @@ func (e *Endpoint) Copy() *Endpoint {
 	return &copied
 }
 
+// RouteEntry describes a computed route to a destination endpoint.
+type RouteEntry struct {
+	Destination GatewayName
+	NextHop     GatewayName
+	Cost        int
+}
+
 // Network describes the network topology in the cluster and
 // provides enough information for route driver and vpn driver to set up routing rules and vpn connections.
 type Network struct {
@@ -73,6 +80,8 @@ type Network struct {
 	RemoteEndpoints map[GatewayName]*Endpoint
 	// RemoteNodeInfo stores NodeInfo of all nodes in remote gateways
 	RemoteNodeInfo map[NodeName]*v1beta1.NodeInfo
+	// RouteTable stores the pre-computed shortest paths to all remote gateways.
+	RouteTable map[GatewayName]RouteEntry
 }
 
 func (n *Network) Copy() *Network {
@@ -84,6 +93,7 @@ func (n *Network) Copy() *Network {
 		LocalNodeInfo:   make(map[NodeName]*v1beta1.NodeInfo),
 		RemoteEndpoints: make(map[GatewayName]*Endpoint),
 		RemoteNodeInfo:  make(map[NodeName]*v1beta1.NodeInfo),
+		RouteTable:      make(map[GatewayName]RouteEntry),
 	}
 	for k, v := range n.RemoteEndpoints {
 		nw.RemoteEndpoints[k] = v.Copy()
@@ -93,6 +103,9 @@ func (n *Network) Copy() *Network {
 	}
 	for k, v := range n.RemoteNodeInfo {
 		nw.RemoteNodeInfo[k] = v.DeepCopy()
+	}
+	for k, v := range n.RouteTable {
+		nw.RouteTable[k] = v
 	}
 	return nw
 }
