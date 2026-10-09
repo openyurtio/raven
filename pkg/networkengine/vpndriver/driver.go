@@ -17,6 +17,7 @@ limitations under the License.
 package vpndriver
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -49,6 +50,14 @@ type Driver interface {
 	MTU() (int, error)
 	// Cleanup performs the necessary uninstallation.
 	Cleanup() error
+}
+
+// LifecycleAware is an optional interface for drivers with background work.
+// SetLifecycle is called once per driver instance, before Init. The context
+// belongs to the Engine; L3 re-enable creates a new driver instance. onChange
+// must be safe to call from a background goroutine and only enqueue reconciliation.
+type LifecycleAware interface {
+	SetLifecycle(ctx context.Context, onChange func())
 }
 
 // Connection is the struct for VPN connection.

@@ -19,17 +19,16 @@ package wireguard
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net"
 	"os"
-	"reflect"
 	"strconv"
+	"sync"
 	"time"
 
-	"github.com/pkg/errors"
 	"github.com/vdobler/ht/errorlist"
 	"github.com/vishvananda/netlink"
-	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
@@ -58,6 +57,10 @@ const (
 	PublicKey = "publicKey"
 	// KeepAliveInterval to use for wg peers.
 	KeepAliveInterval = 5 * time.Second
+	// The bundled userspace backend retries handshakes after 5s plus jitter.
+	// A 5s persistent keepalive can restart simultaneous initiations before
+	// that retry fires. Leave kernel peers unchanged and use 6s for userspace.
+	userspaceKeepAliveInterval = 6 * time.Second
 
 	// DeviceName specifies name of WireGuard network device.
 	DeviceName = "raven-wg0"
@@ -72,16 +75,31 @@ var findCentralGw = vpndriver.FindCentralGwFn
 var enableCreateEdgeConnection = vpndriver.EnableCreateEdgeConnection
 
 var _ vpndriver.Driver = (*wireguard)(nil)
+var _ vpndriver.LifecycleAware = (*wireguard)(nil)
 
 func init() {
 	vpndriver.RegisterDriver(DriverName, New)
 }
 
 type wireguard struct {
-	wgClient   *wgctrl.Client
+	wgClient   controlClient
 	privateKey wgtypes.Key
 	psk        wgtypes.Key
 	wgLink     netlink.Link
+	device     *deviceManager
+	// Last successfully requested endpoints, separate from endpoints learned by WireGuard.
+	peerEndpoints map[wgtypes.Key]string
+
+	// Runtime dependencies and state for the userspace backend.
+	ctx        context.Context
+	onChange   func()
+	healthMu   sync.Mutex
+	fault      error
+	ready      bool
+	configured bool
+	recovery   userspaceRecovery
+	// Owned by the reconciliation worker, separate from process-start backoff.
+	cleanupPending bool
 
 	iptables          iptablesutil.IPTablesInterface
 	ipset             ipsetutil.IPSetInterface
@@ -90,6 +108,13 @@ type wireguard struct {
 	ravenClient       client.Client
 	listenPort        int
 	keepaliveInterval int
+
+	// System operations are kept separate from reconciliation and retry policy.
+	withdrawRoutes func() error
+	cleanupNAT     func() error
+	applyNAT       func(*types.Network) error
+	applyRoutes    func(*types.Network) error
+	cleanupIPSet   func() error
 }
 
 func New(cfg *config.Config) (vpndriver.Driver, error) {
@@ -97,12 +122,22 @@ func New(cfg *config.Config) (vpndriver.Driver, error) {
 	if err != nil {
 		port = DefaultListenPort
 	}
-	return &wireguard{
+	w := &wireguard{
 		nodeName:          types.NodeName(cfg.NodeName),
 		ravenClient:       cfg.Manager.GetClient(),
 		listenPort:        port,
 		keepaliveInterval: cfg.Tunnel.KeepAliveInterval,
-	}, nil
+		ctx:               context.Background(),
+	}
+	w.device = newDeviceManager(w.processExited)
+	w.withdrawRoutes = func() error {
+		return errors.Join(networkutil.CleanRulesOnNode(wgRouteTableID), networkutil.CleanRoutesOnNode(wgRouteTableID))
+	}
+	w.cleanupNAT = w.cleanupRavenNAT
+	w.applyNAT = w.ensureRavenSkipNAT
+	w.applyRoutes = w.ensureRoutes
+	w.cleanupIPSet = cleanupWireGuardIPSet
+	return w, nil
 }
 
 func (w *wireguard) Init() error {
@@ -111,22 +146,6 @@ func (w *wireguard) Init() error {
 	if err != nil {
 		return err
 	}
-	// Create the WireGuard controller.
-	w.wgClient, err = wgctrl.New()
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("wgctrl is not available on this system")
-		}
-		return fmt.Errorf("failed to open wgctl client: %v", err)
-	}
-	defer func() {
-		if err != nil && w.wgClient != nil {
-			if e := w.wgClient.Close(); e != nil {
-				klog.Errorf("failed to close client: %v", e)
-			}
-		}
-	}()
-
 	// Generating keys
 	pskBytes := sha256.Sum256([]byte(vpndriver.GetPSK()))
 	if w.psk, err = wgtypes.NewKey(pskBytes[:]); err != nil {
@@ -140,128 +159,102 @@ func (w *wireguard) Init() error {
 	return nil
 }
 
-func (w *wireguard) isWgDeviceChanged(existing, desired netlink.Link) bool {
-	if d, err := w.wgClient.Device(DeviceName); err == nil {
-		if d.ListenPort == w.listenPort && reflect.DeepEqual(d.PrivateKey, w.privateKey) {
-			return false
-		}
-	}
-	if existing.Attrs().MTU == desired.Attrs().MTU {
-		return false
-	}
-	return true
-}
-
-// ensureWgLink creates new wg link if not exists.
+// ensureWgLink shares configuration across kernel and userspace devices.
 func (w *wireguard) ensureWgLink(network *types.Network, routeDriverMTUFn func(*types.Network) (int, error)) error {
-	var err error
-	var vpnRouteMTU, routeDriverMTU int
-	vpnRouteMTU, err = w.MTU()
+	if err := w.deferUserspaceStart(); err != nil {
+		return err
+	}
+	mtu, err := w.MTU()
 	if err != nil {
 		return err
 	}
-	routeDriverMTU, err = routeDriverMTUFn(network)
+	routeMTU, err := routeDriverMTUFn(network)
 	if err != nil {
 		return err
 	}
-
-	// Config wg link
-	la := netlink.NewLinkAttrs()
-	la.Name = DeviceName
-	if vpnRouteMTU > routeDriverMTU {
-		la.MTU = routeDriverMTU
-	} else {
-		la.MTU = vpnRouteMTU
+	if routeMTU < mtu {
+		mtu = routeMTU
 	}
-	wgLink := &netlink.GenericLink{
-		LinkAttrs: la,
-		LinkType:  wgLinkType,
+	wasRunning := w.device.selected == backendUserspace && w.device.process.Running()
+	w.wgLink, err = w.device.ensure(w.ctx, mtu, w.privateKey, w.listenPort)
+	w.wgClient = w.device.client
+	if w.UsesUserspace() {
+		w.recovery.wanted = true
 	}
-
-	// Delete existing wg link if needed
-	wgLinkExist, err := netlink.LinkByName(DeviceName)
-	if err == nil {
-		// delete existing device if not wireguard type.
-		if w.isWgDeviceChanged(wgLink, wgLinkExist) {
-			klog.InfoS("wireguard device changed", "link", wgLinkExist)
-			if err := netlink.LinkDel(wgLinkExist); err != nil {
-				return fmt.Errorf("error delete existing link: %v", err)
-			}
-		} else {
-			w.wgLink = wgLinkExist
-			return nil
-		}
+	if err != nil && w.device.selected == backendUserspace &&
+		(!w.device.process.Running() || w.userspaceControlFailed() || linkMissing(err) ||
+			errors.Is(err, os.ErrNotExist) || (!wasRunning && !configurationRejected(err))) {
+		return w.failUserspace(err)
 	}
-
-	// Create the wg link (ip link add dev $DeviceName type wireguard).
-	if err := netlink.LinkAdd(wgLink); err != nil {
-		return fmt.Errorf("failed to add WireGuard device: %v", err)
-	}
-
-	port := w.listenPort
-	// Init Configure the device.
-	peerConfigs := make([]wgtypes.PeerConfig, 0)
-	cfg := wgtypes.Config{
-		PrivateKey:   &w.privateKey,
-		ListenPort:   &port,
-		FirewallMark: nil,
-		ReplacePeers: true,
-		Peers:        peerConfigs,
-	}
-
-	if err = w.wgClient.ConfigureDevice(DeviceName, cfg); err != nil {
-		return fmt.Errorf("failed to configure WireGuard device: %v", err)
-	}
-
-	if err = netlink.LinkSetUp(wgLink); err != nil {
-		return fmt.Errorf("failed to setup wireguard device: %v", err)
-	}
-	w.wgLink = wgLink
-	return nil
+	return err
 }
 
-func (w *wireguard) ensureConnections(network *types.Network) error {
-	desiredEdgeConns, desiredRelayConns, centralAllowedIPs := w.computeDesiredConnections(network)
-	if len(desiredEdgeConns) == 0 && len(desiredRelayConns) == 0 {
-		klog.Infof("no desired connections, cleaning vpn connections")
-		return w.Cleanup()
+func (w *wireguard) withdrawDevice() error {
+	return w.withdrawDeviceContext(context.Background())
+}
+
+func (w *wireguard) withdrawDeviceContext(ctx context.Context) error {
+	w.configured = false
+	if err := ctx.Err(); err != nil {
+		return err
 	}
+	var errs []error
+	if w.withdrawRoutes != nil {
+		errs = append(errs, w.withdrawRoutes())
+	}
+	if w.device != nil {
+		errs = append(errs, w.device.closeContext(ctx))
+	}
+	w.wgClient, w.wgLink = nil, nil
+	w.peerEndpoints = nil
+	return errors.Join(errs...)
+}
+
+func (w *wireguard) ensureConnections(network *types.Network, desiredEdgeConns, desiredRelayConns map[string]*vpndriver.Connection, centralAllowedIPs []string) error {
 	klog.Infof("desired edge connections: %+v, desired relay connections: %+v", desiredEdgeConns, desiredRelayConns)
 
 	var err error
 
-	peers := w.currentPeers()
-	klog.Infof("current peers: %v", peers)
+	peers, err := w.currentPeers()
+	if err != nil {
+		return err
+	}
+	klog.V(4).InfoS("reconciling WireGuard peers", "count", len(peers))
 
 	if err = w.deleteUndesiredPeers(peers, desiredEdgeConns, desiredRelayConns); err != nil {
 		return fmt.Errorf("ensure edge-edge peers error %s", err.Error())
 	}
 
-	if err = w.ensureEdgePeers(desiredEdgeConns); err != nil {
+	if err = w.ensureEdgePeers(desiredEdgeConns, peers); err != nil {
 		return fmt.Errorf("ensure edge-edge peers error %s", err.Error())
 	}
-	if err = w.ensureRelayPeers(desiredRelayConns, centralAllowedIPs); err != nil {
+	if err = w.ensureRelayPeers(desiredRelayConns, centralAllowedIPs, peers); err != nil {
 		return fmt.Errorf("ensure cloud-edge peers error %s", err.Error())
 	}
 
-	if err = w.ensureRavenSkipNAT(network); err != nil {
+	if err = w.applyNAT(network); err != nil {
 		return fmt.Errorf("ensure raven skip nat error %s", err.Error())
 	}
 
 	return nil
 }
 
-func (w *wireguard) currentPeers() map[string]wgtypes.Peer {
+func (w *wireguard) currentPeers() (map[string]wgtypes.Peer, error) {
 	set := make(map[string]wgtypes.Peer)
 	dev, err := w.wgClient.Device(DeviceName)
 	if err != nil {
 		klog.Errorf("can not found wireguard device %s, error %s", DeviceName, err.Error())
-		return set
+		if w.UsesUserspace() {
+			return nil, err
+		}
+		// Preserve the existing kernel path; userspace transport failures must
+		// reach Apply so it can recover the child instead of treating it as empty.
+		return set, nil
 	}
 	for _, peer := range dev.Peers {
 		set[peer.PublicKey.String()] = peer
 	}
-	return set
+	return set, nil
 }
 
 func (w *wireguard) deleteUndesiredPeers(currentConns map[string]wgtypes.Peer, desiredEdgeConns, desiredRelayConns map[string]*vpndriver.Connection) error {
@@ -283,7 +276,7 @@ func (w *wireguard) deleteUndesiredPeers(currentConns map[string]wgtypes.Peer, d
 	return errList.AsError()
 }
 
-func (w *wireguard) ensureEdgePeers(desiredEdgeConns map[string]*vpndriver.Connection) error {
+func (w *wireguard) ensureEdgePeers(desiredEdgeConns map[string]*vpndriver.Connection, current map[string]wgtypes.Peer) error {
 	if len(desiredEdgeConns) == 0 {
 		klog.Infof("no desired edge connections")
 		return nil
@@ -314,13 +307,16 @@ func (w *wireguard) ensureEdgePeers(desiredEdgeConns map[string]*vpndriver.Conne
 			AllowedIPs:                  allowedIPs,
 		})
 	}
+	if w.device.selected == backendUserspace {
+		return w.configureChangedPeers(peerConfigs, current)
+	}
 	return w.wgClient.ConfigureDevice(DeviceName, wgtypes.Config{
 		ReplacePeers: true,
 		Peers:        peerConfigs,
 	})
 }
 
-func (w *wireguard) ensureRelayPeers(desiredRelayConns map[string]*vpndriver.Connection, centralAllowedIPs []string) error {
+func (w *wireguard) ensureRelayPeers(desiredRelayConns map[string]*vpndriver.Connection, centralAllowedIPs []string, current map[string]wgtypes.Peer) error {
 	if len(desiredRelayConns) == 0 {
 		klog.Infof("no desired relay connections")
 		return nil
@@ -337,6 +333,9 @@ func (w *wireguard) ensureRelayPeers(desiredRelayConns map[string]*vpndriver.Con
 
 		remotePort := w.listenPort
 		ka := KeepAliveInterval
+		if w.device.selected == backendUserspace {
+			ka = userspaceKeepAliveInterval
+		}
 		peerConfigs = append(peerConfigs, wgtypes.PeerConfig{
 			PublicKey:    *newKey,
 			Remove:       false,
@@ -352,20 +351,35 @@ func (w *wireguard) ensureRelayPeers(desiredRelayConns map[string]*vpndriver.Con
 		})
 	}
 
+	if w.device.selected == backendUserspace {
+		return w.configureChangedPeers(peerConfigs, current)
+	}
 	return w.wgClient.ConfigureDevice(DeviceName, wgtypes.Config{
 		ReplacePeers: false,
 		Peers:        peerConfigs,
 	})
 }
 
-func (w *wireguard) Apply(network *types.Network, routeDriverMTUFn func(*types.Network) (int, error)) error {
-	if network.LocalEndpoint == nil || len(network.RemoteEndpoints) == 0 {
+func (w *wireguard) Apply(network *types.Network, routeDriverMTUFn func(*types.Network) (int, error)) (applyErr error) {
+	defer func() {
+		if applyErr != nil {
+			w.SetNetworkReady(false)
+			if w.userspaceControlFailed() {
+				applyErr = w.failUserspace(applyErr)
+			}
+		}
+	}()
+	w.configured = false
+	if network == nil || network.LocalEndpoint == nil || len(network.RemoteEndpoints) == 0 {
 		klog.Info("no local gateway or remote gateway is found, cleaning vpn connections")
 		return w.Cleanup()
 	}
 	if network.LocalEndpoint.NodeName != w.nodeName {
 		klog.Infof("the current node is not gateway node, cleaning vpn connections")
 		return w.Cleanup()
+	}
+	if err := w.CheckHealth(); err != nil {
+		return err
 	}
 	w.centralGw = findCentralGw(network)
 	if _, ok := network.LocalEndpoint.Config[PublicKey]; !ok || network.LocalEndpoint.Config[PublicKey] != w.privateKey.PublicKey().String() {
@@ -376,9 +390,26 @@ func (w *wireguard) Apply(network *types.Network, routeDriverMTUFn func(*types.N
 		return errors.New("retry to config public key")
 	}
 
-	if err := w.ensureWgLink(network, routeDriverMTUFn); err != nil {
-		return fmt.Errorf("fail to ensure wireguar link: %s", err.Error())
+	edge, relay, centralAllowedIPs := w.computeDesiredConnections(network)
+	if len(edge) == 0 && len(relay) == 0 {
+		return w.Cleanup()
 	}
+	if err := w.ensureWgLink(network, routeDriverMTUFn); err != nil {
+		return fmt.Errorf("ensure WireGuard device: %w", err)
+	}
+	if err := w.applyRoutes(network); err != nil {
+		return err
+	}
+
+	if err := w.ensureConnections(network, edge, relay, centralAllowedIPs); err != nil {
+		return fmt.Errorf("error ensure VPN tunnels: %s", err.Error())
+	}
+
+	w.configured = true
+	return nil
+}
+
+func (w *wireguard) ensureRoutes(network *types.Network) error {
 	// 3. Config device route and rules
 	currentRoutes, err := networkutil.ListRoutesOnNode(wgRouteTableID)
 	if err != nil {
@@ -399,10 +430,6 @@ func (w *wireguard) Apply(network *types.Network, routeDriverMTUFn func(*types.N
 	err = networkutil.ApplyRules(currentRules, desiredRules)
 	if err != nil {
 		return fmt.Errorf("error applying wireguard rules: %s", err.Error())
-	}
-
-	if err = w.ensureConnections(network); err != nil {
-		return fmt.Errorf("error ensure VPN tunnels: %s", err.Error())
 	}
 
 	return nil
@@ -454,47 +481,78 @@ func (w *wireguard) MTU() (int, error) {
 }
 
 func (w *wireguard) Cleanup() error {
-	errList := errorlist.List{}
-	if err := networkutil.CleanRulesOnNode(wgRouteTableID); err != nil {
-		errList = errList.Append(err)
-	}
+	return w.CleanupContext(context.Background())
+}
 
-	if err := networkutil.CleanRoutesOnNode(wgRouteTableID); err != nil {
-		errList = errList.Append(err)
+// CleanupContext bounds userspace waits using the caller's remaining budget.
+// Cleanup must work even after the driver's runtime context is cancelled.
+func (w *wireguard) CleanupContext(ctx context.Context) (cleanupErr error) {
+	defer func() {
+		if w.UsesUserspace() {
+			w.cleanupPending = cleanupErr != nil
+		}
+	}()
+	if w.UsesUserspace() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	w.SetNetworkReady(false)
+	w.configured = false
+	// Stop process recovery immediately. Failed teardown has its own retry
+	// state, so role loss/L3 disable never requests a replacement child.
+	w.recovery = userspaceRecovery{}
+	err := w.withdrawDeviceContext(ctx)
+	if ctx.Err() != nil {
+		return errors.Join(err, ctx.Err())
+	}
+	if w.cleanupNAT != nil {
+		err = errors.Join(err, w.cleanupNAT())
+	}
+	w.healthMu.Lock()
+	w.fault = nil
+	w.healthMu.Unlock()
+	return err
+}
 
-	link, err := netlink.LinkByName(DeviceName)
-	if _, ok := err.(netlink.LinkNotFoundError); ok {
-		return errList.AsError()
+func (w *wireguard) cleanupRavenNAT() error {
+	if w.iptables == nil {
+		return nil
 	}
+	var errs []error
+	// Ensure the target exists before iptables -C: a missing target returns
+	// EINVAL rather than the "rule absent" result understood by DeleteIfExists.
+	if err := w.iptables.NewChainIfNotExist(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain); err != nil {
+		errs = append(errs, err)
+	} else {
+		errs = append(errs, w.iptables.DeleteIfExists(iptablesutil.NatTable, iptablesutil.PostRoutingChain,
+			"-m", "comment", "--comment", "raven traffic should skip NAT", "-o", DeviceName, "-j", iptablesutil.RavenPostRoutingChain))
+		errs = append(errs, w.iptables.ClearAndDeleteChain(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain))
+	}
+	errs = append(errs, w.cleanupIPSet())
+	return errors.Join(errs...)
+}
+
+// cleanupWireGuardIPSet tolerates partial startup without creating a new set.
+// Libreswan continues to use the existing shared cleanup helper.
+func cleanupWireGuardIPSet() error {
+	return cleanupIPSet(netlink.IpsetListAll, netlink.IpsetFlush, netlink.IpsetDestroy)
+}
+
+func cleanupIPSet(list func() ([]netlink.IPSetResult, error), flush, destroy func(string) error) error {
+	sets, err := list()
 	if err != nil {
-		errList = errList.Append(fmt.Errorf("error retrieving the wireguard interface %q: %v", DeviceName, err))
-		return errList.AsError()
+		return fmt.Errorf("list WireGuard ipsets: %w", err)
 	}
-
-	if err = netlink.LinkDel(link); err != nil {
-		errList = errList.Append(fmt.Errorf("error delete existing wireguard device %q: %v", DeviceName, err))
+	for _, set := range sets {
+		if set.SetName == ravenSkipNatSet {
+			return errors.Join(flush(ravenSkipNatSet), destroy(ravenSkipNatSet))
+		}
 	}
-
-	err = vpnipset.CleanupRavenSkipNATIPSet()
-	if err != nil {
-		errList = errList.Append(fmt.Errorf("error cleanup ipset %s, %s", vpnipset.RavenSkipNatSet, err.Error()))
-	}
-
-	err = w.iptables.NewChainIfNotExist(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain)
-	if err != nil {
-		errList = errList.Append(fmt.Errorf("error create %s chain: %s", iptablesutil.PostRoutingChain, err))
-	}
-	err = w.iptables.DeleteIfExists(iptablesutil.NatTable, iptablesutil.PostRoutingChain, "-m", "comment", "--comment", "raven traffic should skip NAT", "-o", DeviceName, "-j", iptablesutil.RavenPostRoutingChain)
-	if err != nil {
-		errList = errList.Append(fmt.Errorf("error deleting %s chain rule: %s", iptablesutil.PostRoutingChain, err))
-	}
-	err = w.iptables.ClearAndDeleteChain(iptablesutil.NatTable, iptablesutil.RavenPostRoutingChain)
-	if err != nil {
-		errList = errList.Append(fmt.Errorf("error deleting %s chain %s", iptablesutil.RavenPostRoutingChain, err))
-	}
-
-	return errList.AsError()
+	return nil
 }
 
 func (w *wireguard) computeDesiredConnections(network *types.Network) (map[string]*vpndriver.Connection, map[string]*vpndriver.Connection, []string) {
@@ -543,6 +601,7 @@ func (w *wireguard) removePeer(key *wgtypes.Key) error {
 	if err != nil {
 		return fmt.Errorf("error remove WireGuard peer with key %s: %v", key, err)
 	}
+	delete(w.peerEndpoints, *key)
 
 	klog.InfoS("remove peer with key successfully", "key", key.String())
 
@@ -553,7 +612,7 @@ func (w *wireguard) configGatewayPublicKey(gwName string, nodeName string) error
 	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		// get localGateway from api server
 		var apiGw v1beta1.Gateway
-		err := w.ravenClient.Get(context.Background(), client.ObjectKey{
+		err := w.ravenClient.Get(w.ctx, client.ObjectKey{
 			Name: gwName,
 		}, &apiGw)
 		if err != nil {
@@ -565,7 +624,7 @@ func (w *wireguard) configGatewayPublicKey(gwName string, nodeName string) error
 					apiGw.Spec.Endpoints[k].Config = make(map[string]string)
 				}
 				apiGw.Spec.Endpoints[k].Config[PublicKey] = w.privateKey.PublicKey().String()
-				err = w.ravenClient.Update(context.Background(), &apiGw)
+				err = w.ravenClient.Update(w.ctx, &apiGw)
 				return err
 			}
 		}

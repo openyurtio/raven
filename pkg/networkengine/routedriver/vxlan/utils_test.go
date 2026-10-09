@@ -104,35 +104,30 @@ func Test_createVxLanLink(t *testing.T) {
 				VxlanId: 200,
 				Port:    4472,
 			},
-			mockLinkByName: func() func(string) (netlink.Link, error) {
-				callCount := 0
-				return func(name string) (netlink.Link, error) {
-					callCount++
-					if name == vxlanLinkName {
-						// Return existing link with same config (first call)
-						// or return after LinkAdd (second call)
-						return &netlink.Vxlan{
-							LinkAttrs: netlink.LinkAttrs{
-								Name: vxlanLinkName,
-								MTU:  1500,
-							},
-							VxlanId: 200,
-							Port:    4472,
-						}, nil
-					}
-					return nil, netlink.LinkNotFoundError{}
-				}
-			}(),
+			mockLinkByName: func(name string) (netlink.Link, error) {
+				return &netlink.Vxlan{
+					LinkAttrs: netlink.LinkAttrs{
+						Index: 7,
+						Name:  vxlanLinkName,
+						MTU:   1500,
+					},
+					VxlanId: 200,
+					Port:    4472,
+				}, nil
+			},
 			mockLinkAdd: func(link netlink.Link) error {
-				return nil
+				return fmt.Errorf("existing link must not be added")
 			},
 			mockLinkDel: func(link netlink.Link) error {
-				return nil
+				return fmt.Errorf("unchanged link must not be deleted")
 			},
 			wantErr: false,
 			validateResult: func(t *testing.T, result netlink.Link) {
 				if result == nil {
-					t.Error("expected non-nil link, got nil")
+					t.Fatal("expected non-nil link, got nil")
+				}
+				if result.Attrs().Index != 7 {
+					t.Errorf("expected existing link index 7, got %d", result.Attrs().Index)
 				}
 			},
 		},

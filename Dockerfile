@@ -20,6 +20,8 @@ ARG GITCOMMIT
 # Build
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=on go build -ldflags "-X main.GitCommit=${GITCOMMIT}" -a -o raven-agent-ds cmd/agent/main.go
 
+# Build the userspace backend from the exact version in go.mod/go.sum.
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -o wireguard-go golang.zx2c4.com/wireguard
 
 FROM alpine:3.18
 COPY hack/iptables-wrapper-installer.sh /iptables-wrapper-installer.sh
@@ -33,7 +35,7 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
     && touch /run/openrc/softlevel \
     && rc-update add ipsec
 
-COPY --from=builder /workspace/raven-agent-ds /usr/local/bin/
+COPY --from=builder /workspace/raven-agent-ds /workspace/wireguard-go /usr/local/bin/
 COPY pluto /usr/local/bin/
 
 ENTRYPOINT  ["/usr/local/bin/raven-agent-ds"]

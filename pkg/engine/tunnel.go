@@ -18,6 +18,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -42,6 +43,8 @@ import (
 )
 
 type TunnelEngine struct {
+	ctx           context.Context
+	onChange      func()
 	nodeName      string
 	forwardNodeIP bool
 	natTraversal  bool
@@ -52,12 +55,17 @@ type TunnelEngine struct {
 	routeDriver       routedriver.Driver
 	vpnDriver         vpndriver.Driver
 	driverInitialized bool
+	cleanupPending    bool
 
 	nodeInfos map[types.NodeName]*v1beta1.NodeInfo
 	network   *types.Network
 }
 
 func (c *TunnelEngine) InitDriver() error {
+	if c.cleanupPending {
+		return errors.New("previous userspace tunnel cleanup is incomplete")
+	}
+
 	var err error
 	c.routeDriver, err = routedriver.New(c.config.Tunnel.RouteDriver, c.config)
 	if err != nil {
@@ -74,6 +82,9 @@ func (c *TunnelEngine) InitDriver() error {
 		}
 		return fmt.Errorf("fail to create vpn driver: %s, %s", c.config.Tunnel.VPNDriver, err)
 	}
+	if driver, ok := c.vpnDriver.(vpndriver.LifecycleAware); ok {
+		driver.SetLifecycle(c.ctx, c.onChange)
+	}
 	err = c.vpnDriver.Init()
 	if err != nil {
 		if cleanupErr := c.routeDriver.Cleanup(); cleanupErr != nil {
@@ -87,7 +98,14 @@ func (c *TunnelEngine) InitDriver() error {
 
 func (c *TunnelEngine) CleanupDriver() bool {
 	err := wait.PollUntilContextTimeout(context.Background(), time.Second, 5*time.Second, true, func(ctx context.Context) (done bool, err error) {
-		err = c.vpnDriver.Cleanup()
+		if driver, ok := c.vpnDriver.(interface {
+			UsesUserspace() bool
+			CleanupContext(context.Context) error
+		}); ok && driver.UsesUserspace() {
+			err = driver.CleanupContext(ctx)
+		} else {
+			err = c.vpnDriver.Cleanup()
+		}
 		if err != nil {
 			klog.Errorf("fail to cleanup vpn driver: %s", err.Error())
 			return false, nil
@@ -99,6 +117,11 @@ func (c *TunnelEngine) CleanupDriver() bool {
 		}
 		return true, nil
 	})
+	// Only userspace teardown needs to protect an existing child and its
+	// resources from replacement if L3 is re-enabled before cleanup succeeds.
+	if driver, ok := c.vpnDriver.(interface{ UsesUserspace() bool }); ok && driver.UsesUserspace() {
+		c.cleanupPending = err != nil
+	}
 	if err != nil {
 		klog.Errorf("driver cleanup did not complete successfully, will retry next sync")
 		return false
@@ -114,25 +137,44 @@ func (c *TunnelEngine) Status() bool {
 }
 
 // sync syncs full state according to the gateway list.
-func (c *TunnelEngine) Handler(ctx context.Context) error {
+func (c *TunnelEngine) Handler(ctx context.Context) (syncErr error) {
+	defer func() {
+		if reporter, ok := c.vpnDriver.(interface{ SetNetworkReady(bool) }); ok {
+			reporter.SetNetworkReady(syncErr == nil && c.Status() && c.driverInitialized)
+		}
+	}()
 	shouldRun := c.Status()
 
 	if !shouldRun {
-		if c.driverInitialized {
+		if c.driverInitialized || c.cleanupPending {
 			klog.Infoln("L3 tunnel disabled, cleaning up drivers")
 			if c.CleanupDriver() {
 				c.driverInitialized = false
+			} else if c.cleanupPending {
+				return errors.New("tunnel cleanup is incomplete")
 			}
 		}
 		return nil
 	}
 
+	if c.cleanupPending {
+		if !c.CleanupDriver() {
+			return errors.New("previous userspace tunnel cleanup is incomplete")
+		}
+		c.driverInitialized = false
+	}
 	if !c.driverInitialized {
 		klog.Infoln("L3 tunnel enabled, initializing drivers")
 		if err := c.InitDriver(); err != nil {
 			return fmt.Errorf("fail to init tunnel driver on demand: %w", err)
 		}
 		c.driverInitialized = true
+	}
+
+	if health, ok := c.vpnDriver.(interface{ CheckHealth() error }); ok {
+		if err := health.CheckHealth(); err != nil {
+			return err
+		}
 	}
 
 	if c.config.Tunnel.NATTraversal {
@@ -143,7 +185,7 @@ func (c *TunnelEngine) Handler(ctx context.Context) error {
 	}
 
 	var gws v1beta1.GatewayList
-	err := c.ravenClient.List(context.Background(), &gws)
+	err := c.ravenClient.List(c.driverContext(ctx), &gws)
 	if err != nil {
 		return err
 	}
@@ -167,7 +209,7 @@ func (c *TunnelEngine) Handler(ctx context.Context) error {
 					}
 				}
 				if c.natTraversal && (ep.NATType == "" || ep.PublicPort == 0 && ep.NATType != utils.NATSymmetric) {
-					if err := c.configGatewayStunInfo(gw); err != nil {
+					if err := c.configGatewayStunInfo(ctx, gw); err != nil {
 						klog.ErrorS(err, "error config gateway stun info", "gateway", klog.KObj(gw))
 					}
 				}
@@ -353,7 +395,7 @@ func (c *TunnelEngine) configGatewayPublicIP(ctx context.Context, gateway *v1bet
 	err = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		// get localGateway from api server
 		var apiGw v1beta1.Gateway
-		err := c.ravenClient.Get(context.Background(), client.ObjectKey{
+		err := c.ravenClient.Get(c.driverContext(ctx), client.ObjectKey{
 			Name: gateway.Name,
 		}, &apiGw)
 		if err != nil {
@@ -362,7 +404,7 @@ func (c *TunnelEngine) configGatewayPublicIP(ctx context.Context, gateway *v1bet
 		for k, v := range apiGw.Spec.Endpoints {
 			if v.NodeName == c.nodeName && v.Type == v1beta1.Tunnel {
 				apiGw.Spec.Endpoints[k].PublicIP = publicIP
-				err = c.ravenClient.Update(context.Background(), &apiGw)
+				err = c.ravenClient.Update(c.driverContext(ctx), &apiGw)
 				return err
 			}
 		}
@@ -371,7 +413,7 @@ func (c *TunnelEngine) configGatewayPublicIP(ctx context.Context, gateway *v1bet
 	return err
 }
 
-func (c *TunnelEngine) configGatewayStunInfo(gateway *v1beta1.Gateway) error {
+func (c *TunnelEngine) configGatewayStunInfo(ctx context.Context, gateway *v1beta1.Gateway) error {
 	if getActiveEndpoints(gateway, v1beta1.Tunnel).NodeName != c.nodeName {
 		return nil
 	}
@@ -393,7 +435,7 @@ func (c *TunnelEngine) configGatewayStunInfo(gateway *v1beta1.Gateway) error {
 	err = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		// get localGateway from api server
 		var apiGw v1beta1.Gateway
-		err := c.ravenClient.Get(context.Background(), client.ObjectKey{
+		err := c.ravenClient.Get(c.driverContext(ctx), client.ObjectKey{
 			Name: gateway.Name,
 		}, &apiGw)
 		if err != nil {
@@ -405,7 +447,7 @@ func (c *TunnelEngine) configGatewayStunInfo(gateway *v1beta1.Gateway) error {
 				if natType != utils.NATSymmetric {
 					apiGw.Spec.Endpoints[k].PublicPort = publicPort
 				}
-				err = c.ravenClient.Update(context.Background(), &apiGw)
+				err = c.ravenClient.Update(c.driverContext(ctx), &apiGw)
 				return err
 			}
 		}
@@ -438,4 +480,15 @@ func (c *TunnelEngine) getLoadBalancerPublicIP(ctx context.Context, gwName strin
 		return "", apierrors.NewServiceUnavailable(fmt.Sprintf("service %s/%s has no public ingress", svc.GetNamespace(), svc.GetName()))
 	}
 	return publicIP, nil
+}
+
+// driverContext preserves the existing background API requests for other drivers.
+func (c *TunnelEngine) driverContext(ctx context.Context) context.Context {
+	if c.config != nil && c.config.Tunnel != nil && c.config.Tunnel.VPNDriver == "wireguard" {
+		if c.ctx != nil {
+			return c.ctx
+		}
+		return ctx
+	}
+	return context.Background()
 }
