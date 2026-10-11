@@ -482,6 +482,43 @@ type stuckCloseControl struct {
 
 func (c *stuckCloseControl) Close() error { <-c.release; return c.fakeControl.Close() }
 
+type retryCloseControl struct {
+	fakeControl
+	errs []error
+}
+
+func (c *retryCloseControl) Close() error {
+	c.closed++
+	if len(c.errs) == 0 {
+		return nil
+	}
+	err := c.errs[0]
+	c.errs = c.errs[1:]
+	return err
+}
+
+func TestCloseErrorAllowsRetry(t *testing.T) {
+	failure := errors.New("temporary close failure")
+	raw := &retryCloseControl{errs: []error{failure}}
+	c := &userspaceControl{controlClient: raw, ctx: context.Background(), timeout: time.Second, process: &fakeProcess{}}
+	f := newDeviceFixture()
+	f.d.client = c
+
+	if err := f.d.close(); !errors.Is(err, failure) {
+		t.Fatalf("first close error = %v", err)
+	}
+	if f.d.client != c || raw.closed != 1 {
+		t.Fatalf("failed close did not retain client for retry: client=%v closed=%d", f.d.client != nil, raw.closed)
+	}
+
+	if err := f.d.close(); err != nil {
+		t.Fatalf("retry close: %v", err)
+	}
+	if f.d.client != nil || raw.closed != 2 {
+		t.Fatalf("retry did not release client: client=%v closed=%d", f.d.client != nil, raw.closed)
+	}
+}
+
 func TestCloseIsBoundedAndRetriedWithoutReplacement(t *testing.T) {
 	release := make(chan struct{})
 	raw := &stuckCloseControl{release: release}

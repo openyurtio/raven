@@ -198,7 +198,15 @@ func (c *userspaceControl) closeContext(parent context.Context) error {
 	case <-done:
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		return c.closeErr
+		err := c.closeErr
+		if err != nil && c.closing == done {
+			// A failed close is retryable. Keep the client owned by the
+			// device manager, but discard this completed attempt so the next
+			// cleanup can call the underlying client again.
+			c.closing = nil
+			c.closeErr = nil
+		}
+		return err
 	case <-ctx.Done():
 		return fmt.Errorf("closing UAPI client: %w", ctx.Err())
 	}
