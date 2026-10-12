@@ -1,0 +1,17 @@
+#cloud-config
+# For a disposable VM only. Reboot after cloud-init completes so the kernel
+# rejects WireGuard module loading, including automatic rtnetlink requests.
+package_update: true
+packages:
+  - iproute2
+  - iptables
+  - ipset
+  - iputils-ping
+  - util-linux
+write_files:
+  - path: /etc/default/grub.d/99-raven-wireguard-test.cfg
+    permissions: '0644'
+    content: |
+      GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX module_blacklist=wireguard"
+runcmd:
+  - [update-grub]

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,6 +37,11 @@ type Engine struct {
 
 	tunnel *TunnelEngine
 	proxy  *ProxyEngine
+
+	// Runtime notifications use the same worker as configuration events.
+	recoveryRequest *v1beta1.Gateway
+	cancelRuntime   context.CancelFunc
+	syncMu          sync.Mutex
 }
 
 func NewEngine(ctx context.Context, cfg *config.Config) (*Engine, error) {
@@ -62,8 +68,13 @@ func NewEngine(ctx context.Context, cfg *config.Config) (*Engine, error) {
 		klog.Errorf("fail to new controller with manager, error %s", err.Error())
 		return engine, err
 	}
+	runtimeCtx, cancelRuntime := context.WithCancel(ctx)
+	engine.cancelRuntime = cancelRuntime
+	engine.recoveryRequest = &v1beta1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "vpn-runtime"}}
 	engine.client = engine.manager.GetClient()
 	engine.tunnel = &TunnelEngine{
+		ctx:           runtimeCtx,
+		onChange:      engine.requestTunnelRecovery,
 		nodeName:      engine.nodeName,
 		forwardNodeIP: cfg.Tunnel.ForwardNodeIP,
 		natTraversal:  cfg.Tunnel.NATTraversal,
@@ -113,6 +124,27 @@ func (e *Engine) processNextWorkItem() bool {
 		return false
 	}
 	defer e.queue.Done(gw)
+	e.syncMu.Lock()
+	defer e.syncMu.Unlock()
+	defer e.scheduleDriver()
+	if gw == e.recoveryRequest {
+		// The driver owns runtime failure detection and retry deadlines.
+		// A Proxy configuration error must not block child-process recovery.
+		e.findLocalGateway(e.context)
+		if err := e.tunnel.Handler(e.context); err != nil {
+			klog.ErrorS(err, "VPN runtime reconciliation failed")
+			if e.nextDriverReconcile() == 0 {
+				// Errors without a runtime or teardown deadline retain the
+				// normal configuration-event retry policy.
+				e.handleEventErr(err, gw)
+				return true
+			}
+		} else {
+			e.option.SetTunnelStatus(e.tunnel.Status())
+		}
+		e.queue.Forget(gw)
+		return true
+	}
 	err := e.sync()
 	if err != nil {
 		e.handleEventErr(err, gw)
@@ -160,7 +192,14 @@ func (e *Engine) findLocalGateway(ctx context.Context) {
 }
 
 func (e *Engine) Cleanup() {
-	if e.tunnel.driverInitialized {
+	// Cancel only runtime dependencies; Proxy and other drivers keep their
+	// existing contexts. Serialize cleanup with the reconciliation worker.
+	if e.cancelRuntime != nil {
+		e.cancelRuntime()
+	}
+	e.syncMu.Lock()
+	defer e.syncMu.Unlock()
+	if e.tunnel.driverInitialized || e.tunnel.cleanupPending {
 		e.tunnel.CleanupDriver()
 	}
 	if e.option.GetProxyStatus() {

@@ -81,7 +81,10 @@ func createVxLanLink(expectedVxLanLink netlink.Link) (netlink.Link, error) {
 		return nil, fmt.Errorf("failed to get link %s, error: %v", vxlanLinkName, err)
 	}
 
-	if currentVxLanLink != nil && isVxlanConfigChanged(currentVxLanLink, expectedVxLanLink) {
+	if currentVxLanLink != nil {
+		if !isVxlanConfigChanged(currentVxLanLink, expectedVxLanLink) {
+			return currentVxLanLink, nil
+		}
 		if err := linkDel(currentVxLanLink); err != nil {
 			return nil, fmt.Errorf("failed to del old vxlan link, error: %v", err)
 		}
