@@ -17,8 +17,11 @@
 package utils
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
+	"time"
 )
 
 const (
@@ -52,5 +55,30 @@ func TestGetPublicIP(t *testing.T) {
 			}
 			t.Logf("\t%s\texpect %v, get %v", succeed, tt.expect, get)
 		})
+	}
+}
+
+func TestGetFromAPIStalledServer(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	defer server.Close()
+	defer close(release)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := getFromAPI(server.URL)
+		errCh <- err
+	}()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatalf("\t%s\texpect an error from a stalled server, but get nil", failed)
+		}
+		t.Logf("\t%s\texpect an error, get %v", succeed, err)
+	case <-time.After(30 * time.Second):
+		t.Fatalf("\t%s\tgetFromAPI did not return within 30s for a stalled server", failed)
 	}
 }

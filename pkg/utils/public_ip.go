@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"time"
 )
 
 var (
@@ -36,6 +37,10 @@ var (
 
 var IPv4RE = regexp.MustCompile(`(?:\d{1,3}\.){3}\d{1,3}`)
 
+// publicIPClient bounds each request, so that a stalled API does not block
+// the caller and the next API in the list gets a chance to answer.
+var publicIPClient = &http.Client{Timeout: 10 * time.Second}
+
 func GetPublicIP() (string, error) {
 	for _, api := range APIs {
 		ip, err := getFromAPI(api)
@@ -47,7 +52,7 @@ func GetPublicIP() (string, error) {
 }
 
 func getFromAPI(api string) (string, error) {
-	resp, err := http.Get(api)
+	resp, err := publicIPClient.Get(api)
 	if err != nil {
 		return "", fmt.Errorf("retrieving public ip from %s: %v", api, err)
 	}
